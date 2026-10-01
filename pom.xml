@@ -55,6 +55,12 @@
     <modules>
         <!-- other modules (core, topologies, ingress, workload, bench, app) arrive in todo 2 -->
         <module>spike</module>
+        <module>core</module>
+        <module>topologies</module>
+        <module>ingress</module>
+        <module>workload</module>
+        <module>bench</module>
+        <module>app</module>
     </modules>
 
 </project>
