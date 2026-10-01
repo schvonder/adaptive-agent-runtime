@@ -1,0 +1,7 @@
+target/
+.env
+.omo/
+*.log
+.idea/
+*.iml
+.DS_Store

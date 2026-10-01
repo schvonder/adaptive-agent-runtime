@@ -1,0 +1,43 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "/v1/chat/completions"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-123",
+      "object": "chat.completion",
+      "created": 1677652288,
+      "model": "gpt-4o-mock",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                  "name": "getWeather",
+                  "arguments": "{\"location\":\"San Francisco\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30
+      }
+    }
+  }
+}
