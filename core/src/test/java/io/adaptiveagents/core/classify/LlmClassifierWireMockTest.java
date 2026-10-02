@@ -55,6 +55,11 @@ public class LlmClassifierWireMockTest {
             return org.springframework.ai.chat.client.ChatClient.builder(chatModel);
         }
         @Bean
+        public LlmClassifier llmClassifier(org.springframework.ai.chat.client.ChatClient.Builder chatClientBuilder, RuleScorer ruleScorer) {
+            // @ConditionalOnBean is evaluated at scan time (before this @Bean exists), so scanning would skip LlmClassifier.
+            return new LlmClassifier(chatClientBuilder, ruleScorer);
+        }
+        @Bean
         public DataSource dataSource() {
             com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
             config.setJdbcUrl(postgres.getJdbcUrl());

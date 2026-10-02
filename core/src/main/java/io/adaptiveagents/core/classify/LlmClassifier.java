@@ -1,13 +1,13 @@
 package io.adaptiveagents.core.classify;
 
 import io.adaptiveagents.core.envelope.TaskEnvelope;
-import io.adaptiveagents.core.model.Topology;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnBean(ChatClient.Builder.class)
 public class LlmClassifier implements ComplexityClassifier {
 
     private final ChatClient chatClient;
