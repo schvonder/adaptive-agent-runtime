@@ -27,6 +27,9 @@ import java.util.List;
  * - Score 1 to 19: AMBIGUOUS (CHAIN)
  * - Score >= 20: CLEAR_COMPLEX (SUPERVISOR if breadthHint >= 4, else FAN_OUT)
  */
+import org.springframework.stereotype.Component;
+
+@Component
 public class RuleScorer {
 
     private static final long TIGHT_DEADLINE_MS = 600_000L;
