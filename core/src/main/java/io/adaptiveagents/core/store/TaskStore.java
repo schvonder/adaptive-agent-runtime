@@ -87,4 +87,14 @@ public class TaskStore {
         
         return find(taskId).get();
     }
+
+    public void recordDecision(UUID taskId, Topology topology, String decisionJson) {
+        int updated = jdbcTemplate.update(
+                "UPDATE tasks SET topology = ?, decision = ?::jsonb, updated_at = now() WHERE task_id = ?",
+                topology.name(), decisionJson, taskId
+        );
+        if (updated == 0) {
+            throw new IllegalTaskStateException("Task not found: " + taskId);
+        }
+    }
 }
