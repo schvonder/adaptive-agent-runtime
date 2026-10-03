@@ -1,6 +1,7 @@
 package io.adaptiveagents.topologies.registry;
 
 import io.adaptiveagents.core.model.Topology;
+import io.adaptiveagents.topologies.guard.NoOpGuard;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -8,7 +9,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TopologyRegistryTest {
 
-    private final TopologyRegistry registry = new TopologyRegistry();
+    // Wiring-only factory: no ChatClient.Builder needed to assert registry routing.
+    private final TopologyRegistry registry =
+            new TopologyRegistry(new SoloGraphFactory(null, null, new NoOpGuard()));
 
     @Test
     void mapsEveryTopologyToItsFactory() {

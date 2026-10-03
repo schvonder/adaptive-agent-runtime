@@ -18,6 +18,21 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>io.adaptiveagents</groupId>
+            <artifactId>workload</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Spring AI: ChatClient + tool calling (version managed by spring-ai-bom) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+        <!-- LangGraph4j: StateGraph + AgentState (version managed by langgraph4j-bom) -->
+        <dependency>
+            <groupId>org.bsc.langgraph4j</groupId>
+            <artifactId>langgraph4j-spring-ai</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>

@@ -88,6 +88,34 @@ public class TaskStore {
         return find(taskId).get();
     }
 
+    public void completeWithResult(UUID taskId, String resultJson) {
+        TaskRecord current = find(taskId).orElseThrow(() -> new IllegalTaskStateException("Task not found: " + taskId));
+        if (!current.status().canTransitionTo(TaskStatus.SUCCEEDED)) {
+            throw new IllegalTaskStateException("Cannot transition from " + current.status() + " to " + TaskStatus.SUCCEEDED);
+        }
+        int updated = jdbcTemplate.update(
+                "UPDATE tasks SET status = ?, result = ?::jsonb, version = version + 1, updated_at = now() WHERE task_id = ? AND version = ?",
+                TaskStatus.SUCCEEDED.name(), resultJson, taskId, current.version()
+        );
+        if (updated == 0) {
+            throw new IllegalTaskStateException("Optimistic concurrency failure or illegal state for task " + taskId + " (status: " + current.status() + ")");
+        }
+    }
+
+    public void completeWithError(UUID taskId, String errorJson) {
+        TaskRecord current = find(taskId).orElseThrow(() -> new IllegalTaskStateException("Task not found: " + taskId));
+        if (!current.status().canTransitionTo(TaskStatus.FAILED)) {
+            throw new IllegalTaskStateException("Cannot transition from " + current.status() + " to " + TaskStatus.FAILED);
+        }
+        int updated = jdbcTemplate.update(
+                "UPDATE tasks SET status = ?, error = ?::jsonb, version = version + 1, updated_at = now() WHERE task_id = ? AND version = ?",
+                TaskStatus.FAILED.name(), errorJson, taskId, current.version()
+        );
+        if (updated == 0) {
+            throw new IllegalTaskStateException("Optimistic concurrency failure or illegal state for task " + taskId + " (status: " + current.status() + ")");
+        }
+    }
+
     public void recordDecision(UUID taskId, Topology topology, String decisionJson) {
         int updated = jdbcTemplate.update(
                 "UPDATE tasks SET topology = ?, decision = ?::jsonb, updated_at = now() WHERE task_id = ?",
