@@ -7,13 +7,10 @@ import io.adaptiveagents.core.envelope.TaskEnvelope;
 import io.adaptiveagents.core.model.TaskStatus;
 import io.adaptiveagents.core.store.TaskStore;
 import io.adaptiveagents.topologies.registry.SoloGraphFactory;
-import io.adaptiveagents.workload.tools.SearchResult;
-import io.adaptiveagents.workload.tools.SearchTool;
-import java.util.ArrayList;
-import java.util.List;
+import io.adaptiveagents.topologies.testutil.MutableSearchTool;
+import io.adaptiveagents.topologies.testutil.ScriptedChatModel;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.RunnableConfig;
@@ -21,11 +18,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -80,7 +73,7 @@ class SoloTopologyIntegrationTest {
 
         @Bean
         @Primary
-        SearchTool searchTool() {
+        MutableSearchTool searchTool() {
             return new MutableSearchTool();
         }
     }
@@ -106,7 +99,7 @@ class SoloTopologyIntegrationTest {
     void reset() {
         jdbcTemplate.execute("TRUNCATE tasks CASCADE");
         chatModel.reset();
-        searchTool.setThrowing(false);
+        searchTool.reset();
     }
 
     @Test
@@ -114,8 +107,8 @@ class SoloTopologyIntegrationTest {
         UUID taskId = UUID.randomUUID();
         String prompt = "research adaptive agents";
         chatModel.enqueue(
-                toolCall("web_search", "{\"query\":\"adaptive agents\"}"),
-                finalText("Adaptive agents are systems that adjust their behaviour at runtime."));
+                ScriptedChatModel.toolCall("web_search", "{\"query\":\"adaptive agents\"}"),
+                ScriptedChatModel.text("Adaptive agents are systems that adjust their behaviour at runtime."));
 
         SoloState state = runGraph(taskId, prompt);
 
@@ -134,7 +127,7 @@ class SoloTopologyIntegrationTest {
         UUID taskId = UUID.randomUUID();
         String prompt = "research something";
         searchTool.setThrowing(true);
-        chatModel.enqueue(toolCall("web_search", "{\"query\":\"boom\"}"));
+        chatModel.enqueue(ScriptedChatModel.toolCall("web_search", "{\"query\":\"boom\"}"));
 
         SoloState state = runGraph(taskId, prompt);
 
@@ -154,7 +147,7 @@ class SoloTopologyIntegrationTest {
     void boundedLoopTerminatesWhenModelNeverFinalizes() {
         UUID taskId = UUID.randomUUID();
         String prompt = "research forever";
-        chatModel.enqueue(toolCall("web_search", "{\"query\":\"loop\"}"));
+        chatModel.enqueue(ScriptedChatModel.toolCall("web_search", "{\"query\":\"loop\"}"));
 
         SoloState state = runGraph(taskId, prompt);
 
@@ -179,59 +172,6 @@ class SoloTopologyIntegrationTest {
             return mapper.writeValueAsString(value);
         } catch (Exception e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    private static ChatResponse toolCall(String name, String arguments) {
-        AssistantMessage message = AssistantMessage.builder()
-                .toolCalls(List.of(new AssistantMessage.ToolCall("call_1", "function", name, arguments)))
-                .build();
-        return new ChatResponse(List.of(new Generation(message)));
-    }
-
-    private static ChatResponse finalText(String text) {
-        return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
-    }
-
-    /** Drains scripted responses in order; the last response repeats for open-ended scripts. */
-    static class ScriptedChatModel implements ChatModel {
-        private final List<ChatResponse> script = new ArrayList<>();
-        private int cursor = 0;
-
-        void enqueue(ChatResponse... responses) {
-            script.addAll(List.of(responses));
-        }
-
-        void reset() {
-            script.clear();
-            cursor = 0;
-        }
-
-        @Override
-        public ChatResponse call(Prompt prompt) {
-            if (script.isEmpty()) {
-                throw new IllegalStateException("ScriptedChatModel has no scripted responses");
-            }
-            ChatResponse response = script.get(Math.min(cursor, script.size() - 1));
-            cursor++;
-            return response;
-        }
-    }
-
-    /** {@link SearchTool} that returns a canned result or throws, controlled per test. */
-    static class MutableSearchTool implements SearchTool {
-        private final AtomicBoolean throwing = new AtomicBoolean(false);
-
-        void setThrowing(boolean value) {
-            throwing.set(value);
-        }
-
-        @Override
-        public List<SearchResult> search(String query) {
-            if (throwing.get()) {
-                throw new RuntimeException("search backend unavailable");
-            }
-            return List.of(new SearchResult("Canned Result", "https://example.com/result", "A canned snippet."));
         }
     }
 }

@@ -11,7 +11,9 @@ class TopologyRegistryTest {
 
     // Wiring-only factory: no ChatClient.Builder needed to assert registry routing.
     private final TopologyRegistry registry =
-            new TopologyRegistry(new SoloGraphFactory(null, null, new NoOpGuard()));
+            new TopologyRegistry(
+                    new SoloGraphFactory(null, null, new NoOpGuard()),
+                    new ChainGraphFactory(null, null, null, new NoOpGuard()));
 
     @Test
     void mapsEveryTopologyToItsFactory() {
