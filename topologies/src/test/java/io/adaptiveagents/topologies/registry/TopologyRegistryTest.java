@@ -13,7 +13,8 @@ class TopologyRegistryTest {
     private final TopologyRegistry registry =
             new TopologyRegistry(
                     new SoloGraphFactory(null, null, new NoOpGuard()),
-                    new ChainGraphFactory(null, null, null, new NoOpGuard()));
+                    new ChainGraphFactory(null, null, null, new NoOpGuard()),
+                    new FanOutGraphFactory(null, null, new NoOpGuard()));
 
     @Test
     void mapsEveryTopologyToItsFactory() {

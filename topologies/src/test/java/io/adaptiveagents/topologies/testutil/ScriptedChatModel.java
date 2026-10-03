@@ -32,7 +32,7 @@ public class ScriptedChatModel implements ChatModel {
     }
 
     @Override
-    public ChatResponse call(Prompt prompt) {
+    public synchronized ChatResponse call(Prompt prompt) {
         if (script.isEmpty()) {
             throw new IllegalStateException("ScriptedChatModel has no scripted responses");
         }
