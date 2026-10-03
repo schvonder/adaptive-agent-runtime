@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/spring-ai",
+  "content": "Spring AI provides portable abstractions for tool calling. Methods annotated with @Tool are exposed to the model and invoked with JSON arguments."
+}

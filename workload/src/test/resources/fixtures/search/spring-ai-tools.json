@@ -1,0 +1,17 @@
+[
+  {
+    "title": "Spring AI Tool Calling",
+    "url": "https://docs.spring.io/spring-ai/reference/api/tools.html",
+    "snippet": "Spring AI supports tool calling so models can invoke methods annotated with @Tool."
+  },
+  {
+    "title": "Spring AI Tool Calling Guide",
+    "url": "https://spring.io/blog/2024/12/02/spring-ai-tool-calling",
+    "snippet": "A practical walkthrough of declaring and registering tools with Spring AI."
+  },
+  {
+    "title": "Building Agents with Spring AI",
+    "url": "https://spring.io/guides/spring-ai-agents",
+    "snippet": "How to compose agentic workflows on top of the Spring AI tool abstractions."
+  }
+]

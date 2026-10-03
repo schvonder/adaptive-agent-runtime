@@ -1,0 +1,17 @@
+[
+  {
+    "title": "Tavily Search API",
+    "url": "https://docs.tavily.com/docs/rest-api/api-reference",
+    "snippet": "POST /search with api_key and query returns a ranked results array."
+  },
+  {
+    "title": "Tavily Quickstart",
+    "url": "https://docs.tavily.com/docs/quickstart",
+    "snippet": "Get started with the Tavily search API in a few minutes."
+  },
+  {
+    "title": "Tavily Python SDK",
+    "url": "https://github.com/tavily-ai/tavily-python",
+    "snippet": "Official Python client for the Tavily search API."
+  }
+]

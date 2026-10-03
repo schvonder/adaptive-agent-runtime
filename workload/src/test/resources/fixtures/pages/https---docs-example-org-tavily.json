@@ -1,0 +1,4 @@
+{
+  "url": "https://docs.example.org/tavily",
+  "content": "The Tavily search endpoint accepts an api_key and a query, and returns ranked results with title, url and content fields."
+}
