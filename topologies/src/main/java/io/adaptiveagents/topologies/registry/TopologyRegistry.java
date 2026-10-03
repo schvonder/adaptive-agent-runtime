@@ -10,12 +10,12 @@ public final class TopologyRegistry {
 
     private final Map<Topology, GraphFactory> factories;
 
-    public TopologyRegistry(SoloGraphFactory soloGraphFactory, ChainGraphFactory chainGraphFactory, FanOutGraphFactory fanOutGraphFactory) {
+    public TopologyRegistry(SoloGraphFactory soloGraphFactory, ChainGraphFactory chainGraphFactory, FanOutGraphFactory fanOutGraphFactory, SupervisorGraphFactory supervisorGraphFactory) {
         this.factories = Map.of(
                 Topology.SOLO, soloGraphFactory,
                 Topology.CHAIN, chainGraphFactory,
                 Topology.FAN_OUT, fanOutGraphFactory,
-                Topology.SUPERVISOR, new SupervisorGraphFactory()
+                Topology.SUPERVISOR, supervisorGraphFactory
         );
     }
 

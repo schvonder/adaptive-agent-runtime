@@ -14,7 +14,8 @@ class TopologyRegistryTest {
             new TopologyRegistry(
                     new SoloGraphFactory(null, null, new NoOpGuard()),
                     new ChainGraphFactory(null, null, null, new NoOpGuard()),
-                    new FanOutGraphFactory(null, null, new NoOpGuard()));
+                    new FanOutGraphFactory(null, null, new NoOpGuard()),
+                    new SupervisorGraphFactory(null, null, new NoOpGuard()));
 
     @Test
     void mapsEveryTopologyToItsFactory() {
