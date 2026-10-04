@@ -3,6 +3,8 @@ package io.adaptiveagents.topologies.chain;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.adaptiveagents.core.envelope.TaskEnvelope;
+import io.adaptiveagents.core.store.TaskStore;
 import io.adaptiveagents.topologies.registry.ChainGraphFactory;
 import io.adaptiveagents.topologies.testutil.MutableSearchTool;
 import io.adaptiveagents.topologies.testutil.ScriptedChatModel;
@@ -76,6 +78,9 @@ class ChainTopologyIntegrationTest {
     ChainGraphFactory chainGraphFactory;
 
     @Autowired
+    TaskStore taskStore;
+
+    @Autowired
     JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -141,7 +146,13 @@ class ChainTopologyIntegrationTest {
     }
 
     private ChainState runGraph(UUID taskId, String prompt) {
-        CompiledGraph<ChainState> graph = chainGraphFactory.build();
+        taskStore.submitOrGet(new TaskEnvelope(taskId, "research", prompt, 1, null, null, null));
+        CompiledGraph<ChainState> graph;
+        try {
+            graph = chainGraphFactory.graph().compile();
+        } catch (org.bsc.langgraph4j.GraphStateException e) {
+            throw new IllegalStateException(e);
+        }
         RunnableConfig config = RunnableConfig.builder().threadId(taskId.toString()).build();
         return graph.invoke(Map.of(ChainState.PROMPT, prompt), config).orElseThrow();
     }

@@ -32,6 +32,9 @@ public final class FanOutState extends AgentState {
     /** True when at least one branch failed. */
     public static final String DEGRADED = "degraded";
 
+    /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
+    public static final String GUARD_REJECTED = "guardRejected";
+
     public FanOutState(Map<String, Object> initData) {
         super(initData);
     }

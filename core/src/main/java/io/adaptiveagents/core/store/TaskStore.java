@@ -88,32 +88,43 @@ public class TaskStore {
         return find(taskId).get();
     }
 
-    public void completeWithResult(UUID taskId, String resultJson) {
+    /**
+     * Moves a RUNNING task to a terminal status, writing the payload to the {@code result} column
+     * for {@link TaskStatus#SUCCEEDED} and to the {@code error} column for every other terminal
+     * status ({@link TaskStatus#FAILED}, {@link TaskStatus#DEADLINE_EXCEEDED},
+     * {@link TaskStatus#BUDGET_EXCEEDED}).
+     *
+     * @throws IllegalTaskStateException when the task is missing, the current status cannot reach
+     *     {@code target}, or an optimistic-concurrency collision occurred
+     */
+    public void completeTerminal(UUID taskId, TaskStatus target, String payloadJson) {
+        if (!target.isTerminal()) {
+            throw new IllegalArgumentException("Target status must be terminal: " + target);
+        }
+        String column = switch (target) {
+            case SUCCEEDED -> "result";
+            case FAILED, DEADLINE_EXCEEDED, BUDGET_EXCEEDED -> "error";
+            default -> throw new IllegalArgumentException("Unsupported terminal status: " + target);
+        };
         TaskRecord current = find(taskId).orElseThrow(() -> new IllegalTaskStateException("Task not found: " + taskId));
-        if (!current.status().canTransitionTo(TaskStatus.SUCCEEDED)) {
-            throw new IllegalTaskStateException("Cannot transition from " + current.status() + " to " + TaskStatus.SUCCEEDED);
+        if (!current.status().canTransitionTo(target)) {
+            throw new IllegalTaskStateException("Cannot transition from " + current.status() + " to " + target);
         }
         int updated = jdbcTemplate.update(
-                "UPDATE tasks SET status = ?, result = ?::jsonb, version = version + 1, updated_at = now() WHERE task_id = ? AND version = ?",
-                TaskStatus.SUCCEEDED.name(), resultJson, taskId, current.version()
+                "UPDATE tasks SET status = ?, " + column + " = ?::jsonb, version = version + 1, updated_at = now() WHERE task_id = ? AND version = ?",
+                target.name(), payloadJson, taskId, current.version()
         );
         if (updated == 0) {
             throw new IllegalTaskStateException("Optimistic concurrency failure or illegal state for task " + taskId + " (status: " + current.status() + ")");
         }
     }
 
+    public void completeWithResult(UUID taskId, String resultJson) {
+        completeTerminal(taskId, TaskStatus.SUCCEEDED, resultJson);
+    }
+
     public void completeWithError(UUID taskId, String errorJson) {
-        TaskRecord current = find(taskId).orElseThrow(() -> new IllegalTaskStateException("Task not found: " + taskId));
-        if (!current.status().canTransitionTo(TaskStatus.FAILED)) {
-            throw new IllegalTaskStateException("Cannot transition from " + current.status() + " to " + TaskStatus.FAILED);
-        }
-        int updated = jdbcTemplate.update(
-                "UPDATE tasks SET status = ?, error = ?::jsonb, version = version + 1, updated_at = now() WHERE task_id = ? AND version = ?",
-                TaskStatus.FAILED.name(), errorJson, taskId, current.version()
-        );
-        if (updated == 0) {
-            throw new IllegalTaskStateException("Optimistic concurrency failure or illegal state for task " + taskId + " (status: " + current.status() + ")");
-        }
+        completeTerminal(taskId, TaskStatus.FAILED, errorJson);
     }
 
     public void recordDecision(UUID taskId, Topology topology, String decisionJson) {

@@ -39,6 +39,9 @@ public final class SupervisorState extends AgentState {
     /** True when the run degraded (a node folded, or forced finish after the critic cap). */
     public static final String DEGRADED = "degraded";
 
+    /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
+    public static final String GUARD_REJECTED = "guardRejected";
+
     /** Final merged result JSON produced by the finalize node, or {@code null} on failure. */
     public static final String RESULT = "result";
 

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.adaptiveagents.core.envelope.TaskEnvelope;
+import io.adaptiveagents.core.store.TaskStore;
 import io.adaptiveagents.topologies.registry.FanOutGraphFactory;
 import io.adaptiveagents.topologies.testutil.MutableSearchTool;
 import io.adaptiveagents.topologies.testutil.ScriptedChatModel;
@@ -75,6 +77,9 @@ class FanOutTopologyIntegrationTest {
 
     @Autowired
     FanOutGraphFactory fanOutGraphFactory;
+
+    @Autowired
+    TaskStore taskStore;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -152,7 +157,13 @@ class FanOutTopologyIntegrationTest {
     }
 
     private FanOutState runGraph(UUID taskId, String prompt) {
-        CompiledGraph<FanOutState> graph = fanOutGraphFactory.build();
+        taskStore.submitOrGet(new TaskEnvelope(taskId, "research", prompt, 1, null, null, null));
+        CompiledGraph<FanOutState> graph;
+        try {
+            graph = fanOutGraphFactory.graph().compile();
+        } catch (org.bsc.langgraph4j.GraphStateException e) {
+            throw new IllegalStateException(e);
+        }
         RunnableConfig config = RunnableConfig.builder().threadId(taskId.toString()).build();
         return graph.invoke(Map.of(FanOutState.PROMPT, prompt), config).orElseThrow();
     }

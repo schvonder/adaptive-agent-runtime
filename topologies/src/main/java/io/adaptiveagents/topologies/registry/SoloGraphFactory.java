@@ -2,6 +2,7 @@ package io.adaptiveagents.topologies.registry;
 
 import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 
+import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.topologies.solo.SoloState;
 import io.adaptiveagents.workload.tools.ResearchTools;
@@ -9,7 +10,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
@@ -25,7 +25,8 @@ import org.springframework.ai.chat.model.ChatResponse;
  *
  * <p>The node never rethrows past the graph: tool errors and loop exhaustion are folded into
  * {@link SoloState#ERROR} plus {@code degraded=true}, so a bad run degrades the state instead of
- * crashing the topology.</p>
+ * crashing the topology. A {@link GuardException} at the loop boundary is folded separately with the
+ * {@link SoloState#GUARD_REJECTED} flag so the runner can map it to a terminal status.</p>
  */
 public final class SoloGraphFactory implements GraphFactory {
 
@@ -40,7 +41,7 @@ public final class SoloGraphFactory implements GraphFactory {
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #build()} is called with a real builder)
+     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param researchTools     workload tool surface registered with the model
      * @param nodeGuard         per-iteration budget/deadline seam
      */
@@ -51,14 +52,14 @@ public final class SoloGraphFactory implements GraphFactory {
     }
 
     @Override
-    public CompiledGraph<SoloState> build() {
+    public StateGraph<SoloState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
             StateGraph<SoloState> graph = new StateGraph<>(SoloState::new);
             graph.addNode(AGENT_NODE, node_async(agentAction(chatClient)));
             graph.addEdge(StateGraph.START, AGENT_NODE);
             graph.addEdge(AGENT_NODE, StateGraph.END);
-            return graph.compile();
+            return graph;
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to assemble SOLO graph", e);
         }
@@ -72,12 +73,13 @@ public final class SoloGraphFactory implements GraphFactory {
 
             for (int i = 0; i < MAX_ITERATIONS; i++) {
                 try {
-                    nodeGuard.check(taskId);
-                } catch (Exception e) {
+                    nodeGuard.check(AGENT_NODE, taskId);
+                } catch (GuardException e) {
                     log.warn("Guard rejected task {} at iteration {}: {}", taskId, i, e.getMessage());
                     return Map.of(
                             SoloState.DEGRADED, true,
                             SoloState.ERROR, "guard rejected: " + e.getMessage(),
+                            SoloState.GUARD_REJECTED, e.getClass().getSimpleName(),
                             SoloState.TOOL_TRANSCRIPT, transcript);
                 }
 

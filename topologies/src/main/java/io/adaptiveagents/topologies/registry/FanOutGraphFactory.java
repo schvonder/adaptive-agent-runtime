@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.adaptiveagents.topologies.fanout.FanOutState;
+import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.SearchResult;
 import io.adaptiveagents.workload.tools.SearchTool;
@@ -16,7 +17,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
@@ -42,8 +42,10 @@ import org.springframework.ai.chat.model.ChatResponse;
  * {@value #FAN_WIDTH}, never pooled): it guards, searches with a per-branch query variant, makes one
  * {@link ChatClient} call to summarize, and returns a single section. A branch that fails catches
  * in-branch and returns a failure marker on the {@link FanOutState#FAILURES} appender, so the gather
- * node still runs with the survivor sections and {@code degraded=true}. Only when every branch fails
- * is {@link FanOutState#ERROR} set.</p>
+ * node still runs with the survivor sections and {@code degraded=true}. A {@link GuardException} at
+ * a branch or gather boundary is folded with the {@link FanOutState#GUARD_REJECTED} flag so the
+ * runner can map it to a terminal status. Only when every branch fails is {@link FanOutState#ERROR}
+ * set.</p>
  */
 public final class FanOutGraphFactory implements GraphFactory {
 
@@ -68,7 +70,7 @@ public final class FanOutGraphFactory implements GraphFactory {
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #build()} is called with a real builder)
+     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param searchTool        workload search tool invoked directly by each branch
      * @param nodeGuard         per-node budget/deadline seam
      */
@@ -79,7 +81,7 @@ public final class FanOutGraphFactory implements GraphFactory {
     }
 
     @Override
-    public CompiledGraph<FanOutState> build() {
+    public StateGraph<FanOutState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
             Map<String, Channel<?>> channels = Map.of(
@@ -99,7 +101,7 @@ public final class FanOutGraphFactory implements GraphFactory {
             }
             graph.addEdge(GATHER_NODE, StateGraph.END);
 
-            return graph.compile();
+            return graph;
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to assemble FAN_OUT graph", e);
         }
@@ -118,9 +120,9 @@ public final class FanOutGraphFactory implements GraphFactory {
     private Map<String, Object> runBranch(int branch, FanOutState state, RunnableConfig config, ChatClient chatClient) {
         UUID taskId = taskId(config);
         try {
-            nodeGuard.check(taskId);
-        } catch (Exception e) {
-            return failure(branch, "guard rejected: " + e.getMessage());
+            nodeGuard.check(branchNodeId(branch), taskId);
+        } catch (GuardException e) {
+            return failureGuard(branch, e);
         }
         try {
             List<SearchResult> results = searchTool.search(state.prompt() + " aspect " + branch);
@@ -141,11 +143,12 @@ public final class FanOutGraphFactory implements GraphFactory {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
+                nodeGuard.check(GATHER_NODE, taskId);
+            } catch (GuardException e) {
                 return Map.of(
                         FanOutState.DEGRADED, true,
-                        FanOutState.ERROR, "gather failed: guard rejected: " + e.getMessage());
+                        FanOutState.ERROR, "gather failed: " + e.getMessage(),
+                        FanOutState.GUARD_REJECTED, e.getClass().getSimpleName());
             }
             List<String> sections = state.sections();
             List<String> failures = state.failures();
@@ -163,6 +166,12 @@ public final class FanOutGraphFactory implements GraphFactory {
 
     private static Map<String, Object> failure(int branch, String message) {
         return Map.of(FanOutState.FAILURES, "branch-" + branch + ": " + (message == null ? "unknown error" : message));
+    }
+
+    private static Map<String, Object> failureGuard(int branch, GuardException e) {
+        return Map.of(
+                FanOutState.FAILURES, "branch-" + branch + ": guard rejected: " + e.getMessage(),
+                FanOutState.GUARD_REJECTED, e.getClass().getSimpleName());
     }
 
     private static String summarize(ChatClient chatClient, int branch, List<SearchResult> results) {

@@ -41,6 +41,9 @@ public final class ChainState extends AgentState {
     /** Name of the node that produced the failure, or {@code null}. */
     public static final String STAGE = "stage";
 
+    /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
+    public static final String GUARD_REJECTED = "guardRejected";
+
     public ChainState(Map<String, Object> initData) {
         super(initData);
     }

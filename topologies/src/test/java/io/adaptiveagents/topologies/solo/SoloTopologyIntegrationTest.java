@@ -162,7 +162,12 @@ class SoloTopologyIntegrationTest {
         taskStore.transition(taskId, TaskStatus.ROUTED);
         taskStore.transition(taskId, TaskStatus.RUNNING);
 
-        CompiledGraph<SoloState> graph = soloGraphFactory.build();
+        CompiledGraph<SoloState> graph;
+        try {
+            graph = soloGraphFactory.graph().compile();
+        } catch (org.bsc.langgraph4j.GraphStateException e) {
+            throw new IllegalStateException(e);
+        }
         RunnableConfig config = RunnableConfig.builder().threadId(taskId.toString()).build();
         return graph.invoke(Map.of(SoloState.PROMPT, prompt), config).orElseThrow();
     }

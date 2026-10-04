@@ -28,6 +28,9 @@ public final class SoloState extends AgentState {
     /** True when the run did not produce a clean result (tool failure / loop exhaustion). */
     public static final String DEGRADED = "degraded";
 
+    /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
+    public static final String GUARD_REJECTED = "guardRejected";
+
     public SoloState(Map<String, Object> initData) {
         super(initData);
     }

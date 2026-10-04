@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.adaptiveagents.topologies.chain.ChainState;
+import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.Citation;
 import io.adaptiveagents.workload.tools.CiteTool;
@@ -15,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
@@ -31,8 +31,10 @@ import org.springframework.ai.chat.model.ChatResponse;
  * <p>The plan and summarize nodes make a single tool-free {@link ChatClient} call each; search and
  * cite are direct tool invocations (no model). A node that fails folds the error into
  * {@link ChainState#ERROR}/{@link ChainState#STAGE}/{@link ChainState#DEGRADED} and every downstream
- * node no-ops, so the graph never rethrows past a node. An empty search result set is a graceful
- * (non-degraded) path that skips the summarize model call.</p>
+ * node no-ops, so the graph never rethrows past a node. A {@link GuardException} at a node boundary
+ * is folded separately with the {@link ChainState#GUARD_REJECTED} flag so the runner can map it to a
+ * terminal status. An empty search result set is a graceful (non-degraded) path that skips the
+ * summarize model call.</p>
  */
 public final class ChainGraphFactory implements GraphFactory {
 
@@ -54,7 +56,7 @@ public final class ChainGraphFactory implements GraphFactory {
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #build()} is called with a real builder)
+     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param searchTool        workload search tool invoked directly by the search node
      * @param citeTool          workload citation tool invoked directly by the cite node
      * @param nodeGuard         per-node budget/deadline seam
@@ -67,7 +69,7 @@ public final class ChainGraphFactory implements GraphFactory {
     }
 
     @Override
-    public CompiledGraph<ChainState> build() {
+    public StateGraph<ChainState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
             StateGraph<ChainState> graph = new StateGraph<>(ChainState::new);
@@ -80,7 +82,7 @@ public final class ChainGraphFactory implements GraphFactory {
             graph.addEdge(SEARCH_NODE, SUMMARIZE_NODE);
             graph.addEdge(SUMMARIZE_NODE, CITE_NODE);
             graph.addEdge(CITE_NODE, StateGraph.END);
-            return graph.compile();
+            return graph;
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to assemble CHAIN graph", e);
         }
@@ -90,9 +92,9 @@ public final class ChainGraphFactory implements GraphFactory {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold(PLAN_NODE, "guard rejected: " + e.getMessage());
+                nodeGuard.check(PLAN_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(PLAN_NODE, e);
             }
             try {
                 String text = callText(chatClient, "Create a concise search plan for: " + state.prompt());
@@ -114,9 +116,9 @@ public final class ChainGraphFactory implements GraphFactory {
             }
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold(SEARCH_NODE, "guard rejected: " + e.getMessage());
+                nodeGuard.check(SEARCH_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(SEARCH_NODE, e);
             }
             try {
                 List<SearchResult> merged = new ArrayList<>();
@@ -138,9 +140,9 @@ public final class ChainGraphFactory implements GraphFactory {
             }
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold(SUMMARIZE_NODE, "guard rejected: " + e.getMessage());
+                nodeGuard.check(SUMMARIZE_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(SUMMARIZE_NODE, e);
             }
             List<SearchResult> results = state.searchResults();
             if (results.isEmpty()) {
@@ -166,9 +168,9 @@ public final class ChainGraphFactory implements GraphFactory {
             }
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold(CITE_NODE, "guard rejected: " + e.getMessage());
+                nodeGuard.check(CITE_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(CITE_NODE, e);
             }
             try {
                 List<Citation> citations = citeTool.cite(state.searchResults(), null);
@@ -226,6 +228,14 @@ public final class ChainGraphFactory implements GraphFactory {
                 ChainState.DEGRADED, true,
                 ChainState.ERROR, stage + " failed: " + message,
                 ChainState.STAGE, stage);
+    }
+
+    private static Map<String, Object> foldGuard(String stage, GuardException e) {
+        return Map.of(
+                ChainState.DEGRADED, true,
+                ChainState.ERROR, stage + " failed: " + e.getMessage(),
+                ChainState.STAGE, stage,
+                ChainState.GUARD_REJECTED, e.getClass().getSimpleName());
     }
 
     private static String callText(ChatClient chatClient, String userPrompt) {

@@ -1,6 +1,8 @@
 package io.adaptiveagents.topologies.registry;
 
 import io.adaptiveagents.core.model.Topology;
+import org.bsc.langgraph4j.StateGraph;
+import org.bsc.langgraph4j.state.AgentState;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -28,5 +30,13 @@ public final class TopologyRegistry {
             throw new IllegalArgumentException("No factory registered for topology: " + topology);
         }
         return factory;
+    }
+
+    /**
+     * Returns the uncompiled graph for a topology so the execution runner can compile it with a
+     * checkpoint saver and a per-task thread id.
+     */
+    public StateGraph<? extends AgentState> graphFor(Topology topology) {
+        return factoryFor(topology).graph();
     }
 }

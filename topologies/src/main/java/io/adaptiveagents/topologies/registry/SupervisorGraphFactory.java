@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.topologies.supervisor.SupervisorState;
 import io.adaptiveagents.workload.tools.SearchResult;
@@ -13,7 +14,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
@@ -38,8 +38,10 @@ import org.springframework.ai.chat.model.ChatResponse;
  * <p>Each subagent makes exactly one {@link ChatClient} call per invocation (researcher distills
  * search findings, writer drafts the report, critic renders a scripted ACCEPT/REVISE verdict) and
  * folds any failure into {@link SupervisorState#ERROR} + {@code degraded=true}, after which the
- * supervisor routes to {@code finalize} with a partial result. The critic verdict is parsed
- * deterministically: anything not starting with {@code ACCEPT} is treated as {@code REVISE}.</p>
+ * supervisor routes to {@code finalize} with a partial result. A {@link GuardException} at a
+ * researcher/writer/critic/finalize boundary is folded with {@link SupervisorState#GUARD_REJECTED}
+ * so the runner can map it to a terminal status. The critic verdict is parsed deterministically:
+ * anything not starting with {@code ACCEPT} is treated as {@code REVISE}.</p>
  */
 public final class SupervisorGraphFactory implements GraphFactory {
 
@@ -75,7 +77,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #build()} is called with a real builder)
+     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param searchTool        workload search tool invoked directly by the researcher node
      * @param nodeGuard         per-node budget/deadline seam
      */
@@ -86,7 +88,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
     }
 
     @Override
-    public CompiledGraph<SupervisorState> build() {
+    public StateGraph<SupervisorState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
             StateGraph<SupervisorState> graph = new StateGraph<>(SupervisorState::new);
@@ -103,15 +105,16 @@ public final class SupervisorGraphFactory implements GraphFactory {
             graph.addEdge(CRITIC_NODE, SUPERVISOR_NODE);
             graph.addEdge(FINALIZE_NODE, StateGraph.END);
 
-            return graph.compile();
+            return graph;
         } catch (GraphStateException e) {
             throw new IllegalStateException("Failed to assemble SUPERVISOR_TEAM graph", e);
         }
     }
 
     /**
-     * Pure routing node: performs no work, no model call. The routing decision itself lives on the
-     * conditional edge attached to this node, so the supervisor contributes only the loop topology.
+     * Pure routing node: performs no work, no model call, and is intentionally unguarded — the
+     * routing decision lives on the conditional edge attached to this node, so there is no node
+     * boundary to enforce.
      */
     private NodeActionWithConfig<SupervisorState> supervisorNode() {
         return (state, config) -> Map.of();
@@ -147,9 +150,9 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold("researcher: guard rejected: " + e.getMessage());
+                nodeGuard.check(RESEARCHER_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(RESEARCHER_NODE, e);
             }
             try {
                 List<SearchResult> results = searchTool.search(state.prompt());
@@ -169,9 +172,9 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold("writer: guard rejected: " + e.getMessage());
+                nodeGuard.check(WRITER_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(WRITER_NODE, e);
             }
             try {
                 String draft = writeDraft(chatClient, state);
@@ -190,9 +193,9 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
-                nodeGuard.check(taskId);
-            } catch (Exception e) {
-                return fold("critic: guard rejected: " + e.getMessage());
+                nodeGuard.check(CRITIC_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(CRITIC_NODE, e);
             }
             try {
                 String verdict = critique(chatClient, state.draft());
@@ -215,6 +218,12 @@ public final class SupervisorGraphFactory implements GraphFactory {
 
     private NodeActionWithConfig<SupervisorState> finalizeNode() {
         return (state, config) -> {
+            UUID taskId = taskId(config);
+            try {
+                nodeGuard.check(FINALIZE_NODE, taskId);
+            } catch (GuardException e) {
+                return foldGuard(FINALIZE_NODE, e);
+            }
             boolean forcedFinish = !state.accepted() && state.criticRounds() >= MAX_CRITIC_ROUNDS;
             boolean degraded = state.degraded() || forcedFinish;
             String resultJson = buildResultJson(state, degraded);
@@ -278,6 +287,13 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return Map.of(
                 SupervisorState.DEGRADED, true,
                 SupervisorState.ERROR, message);
+    }
+
+    private static Map<String, Object> foldGuard(String stage, GuardException e) {
+        return Map.of(
+                SupervisorState.DEGRADED, true,
+                SupervisorState.ERROR, stage + ": guard rejected: " + e.getMessage(),
+                SupervisorState.GUARD_REJECTED, e.getClass().getSimpleName());
     }
 
     private static String callText(ChatClient chatClient, String userPrompt) {

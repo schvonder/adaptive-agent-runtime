@@ -1,18 +1,18 @@
 package io.adaptiveagents.topologies.guard;
 
 import java.util.UUID;
-import org.springframework.stereotype.Component;
 
 /**
- * No-op {@link NodeGuard} used until T16 wires the real budget/deadline checks.
+ * No-op {@link NodeGuard} used in wiring-only contexts (e.g. unit tests that assert registry
+ * routing without a database-backed task).
  *
- * <p>Always permits execution. Replaced by a real guard in T16.</p>
+ * <p>Always permits execution. Not registered as a Spring bean — the production bean is
+ * {@link TaskGuard} (T16).</p>
  */
-@Component
 public final class NoOpGuard implements NodeGuard {
 
     @Override
-    public void check(UUID taskId) {
-        // Intentionally empty: real budget/deadline enforcement lands in T16.
+    public void check(String nodeName, UUID taskId) {
+        // Intentionally empty: used only where no task exists to guard.
     }
 }
