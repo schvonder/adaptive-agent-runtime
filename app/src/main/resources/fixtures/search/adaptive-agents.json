@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Adaptive Agent Runtime Design",
+    "url": "https://example.com/adaptive-agent-runtime",
+    "snippet": "An adaptive runtime selects a topology based on the complexity of the incoming task."
+  },
+  {
+    "title": "Multi-Agent Topologies",
+    "url": "https://example.com/multi-agent-topologies",
+    "snippet": "SOLO, CHAIN, FAN_OUT and SUPERVISOR are common agent topologies."
+  }
+]

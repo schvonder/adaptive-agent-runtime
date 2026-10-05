@@ -39,7 +39,11 @@ public class FixtureSearchAdapter implements SearchTool {
     public FixtureSearchAdapter(String basePath) {
         this.basePath = basePath.endsWith("/") ? basePath : basePath + "/";
         this.objectMapper = new ObjectMapper();
-        this.fixtures = loadFixtures();
+        // Resolve through this class's own classloader: in a Spring Boot fat jar the ambient
+        // (context/system) classloader of a worker thread cannot see BOOT-INF/classes, which would
+        // silently disable every packaged fixture.
+        ClassLoader classLoader = FixtureSearchAdapter.class.getClassLoader();
+        this.fixtures = loadFixtures(classLoader);
     }
 
     @Override
@@ -54,7 +58,8 @@ public class FixtureSearchAdapter implements SearchTool {
             return cached;
         }
 
-        ClassPathResource resource = new ClassPathResource(basePath + slug + ".json");
+        ClassLoader classLoader = FixtureSearchAdapter.class.getClassLoader();
+        ClassPathResource resource = new ClassPathResource(basePath + slug + ".json", classLoader);
         if (!resource.exists()) {
             log.debug("No search fixture for query '{}' (expected {})", query, resource.getPath());
             return List.of();
@@ -67,10 +72,10 @@ public class FixtureSearchAdapter implements SearchTool {
         }
     }
 
-    private Map<String, List<SearchResult>> loadFixtures() {
+    private Map<String, List<SearchResult>> loadFixtures(ClassLoader classLoader) {
         Map<String, List<SearchResult>> loaded = new HashMap<>();
         try {
-            ClassPathResource directory = new ClassPathResource(basePath);
+            ClassPathResource directory = new ClassPathResource(basePath, classLoader);
             if (!directory.exists()) {
                 return loaded;
             }

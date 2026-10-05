@@ -8,6 +8,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.ResultSet;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -47,27 +48,40 @@ public class TaskStore {
     }
 
     public Optional<TaskRecord> find(UUID taskId) {
-        List<TaskRecord> results = jdbcTemplate.query("SELECT * FROM tasks WHERE task_id = ?", (rs, rowNum) -> {
-            try {
-                return new TaskRecord(
-                        UUID.fromString(rs.getString("task_id")),
-                        mapper.readValue(rs.getString("envelope"), TaskEnvelope.class),
-                        TaskStatus.valueOf(rs.getString("status")),
-                        rs.getString("topology") != null ? Topology.valueOf(rs.getString("topology")) : null,
-                        rs.getString("decision"),
-                        rs.getString("result"),
-                        rs.getString("error"),
-                        rs.getBigDecimal("budget_usd"),
-                        rs.getObject("deadline_ms", Long.class),
-                        rs.getObject("created_at", OffsetDateTime.class),
-                        rs.getObject("updated_at", OffsetDateTime.class),
-                        rs.getLong("version")
-                );
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }, taskId);
+        List<TaskRecord> results = jdbcTemplate.query("SELECT * FROM tasks WHERE task_id = ?", this::mapRow, taskId);
         return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+    }
+
+    /**
+     * All tasks in a given status, in deterministic order (creation time, then task id as a
+     * tie-break). Startup rescan uses this to decide, in a stable sequence, which RUNNING tasks to
+     * resume and which to fail over to a terminal status.
+     */
+    public List<TaskRecord> findByStatus(TaskStatus status) {
+        return jdbcTemplate.query(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC, task_id ASC",
+                this::mapRow, status.name());
+    }
+
+    private TaskRecord mapRow(ResultSet rs, int rowNum) {
+        try {
+            return new TaskRecord(
+                    UUID.fromString(rs.getString("task_id")),
+                    mapper.readValue(rs.getString("envelope"), TaskEnvelope.class),
+                    TaskStatus.valueOf(rs.getString("status")),
+                    rs.getString("topology") != null ? Topology.valueOf(rs.getString("topology")) : null,
+                    rs.getString("decision"),
+                    rs.getString("result"),
+                    rs.getString("error"),
+                    rs.getBigDecimal("budget_usd"),
+                    rs.getObject("deadline_ms", Long.class),
+                    rs.getObject("created_at", OffsetDateTime.class),
+                    rs.getObject("updated_at", OffsetDateTime.class),
+                    rs.getLong("version")
+            );
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public TaskRecord transition(UUID taskId, TaskStatus target) {

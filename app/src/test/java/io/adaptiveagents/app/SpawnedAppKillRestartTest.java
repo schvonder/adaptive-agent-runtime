@@ -44,14 +44,18 @@ public class SpawnedAppKillRestartTest {
         Path jarPath = getFatJarPath();
         Path logPath = Paths.get("target", "spawned", "harness.log");
         
+        // The app now assembles the full runtime (component scan across io.adaptiveagents), so the
+        // spawned process needs the deterministic offline profiles alongside the harness probe:
+        // stub-classifier satisfies RoutingService and fixture-model provides a no-network ChatModel.
         Map<String, String> env = Map.of(
-            "SPRING_PROFILES_ACTIVE", "harness",
+            "SPRING_PROFILES_ACTIVE", "harness,stub-classifier,fixture-model",
             "SPRING_DATASOURCE_URL", SingletonPostgres.getJdbcUrl(),
             "SPRING_DATASOURCE_USERNAME", SingletonPostgres.getUsername(),
             "SPRING_DATASOURCE_PASSWORD", SingletonPostgres.getPassword()
         );
 
-        SpawnedApp app = new SpawnedApp(jarPath, logPath, env, "--spring.main.web-application-type=none");
+        SpawnedApp app = new SpawnedApp(jarPath, logPath, env,
+                "--spring.main.web-application-type=none", "--spring.ai.model.chat=none");
         try {
             app.start();
             app.awaitHealthy(30);

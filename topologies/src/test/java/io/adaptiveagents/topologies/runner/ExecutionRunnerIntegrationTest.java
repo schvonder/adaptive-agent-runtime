@@ -194,6 +194,75 @@ class ExecutionRunnerIntegrationTest {
         assertThat(countProgress(taskId, "TASK_COMPLETED")).isEqualTo(1);
     }
 
+    @Test
+    @Timeout(60)
+    void plainResumeOnZeroCheckpointThreadFailsWithNoValidCheckpoint() {
+        UUID taskId = UUID.randomUUID();
+        routeChain(taskId, null);
+        taskStore.transition(taskId, TaskStatus.RUNNING);
+        chatModel.enqueue(
+                ControlledChatModel.text("adaptive agents"),
+                ControlledChatModel.text("summary"));
+
+        // Verified behavior of langgraph4j 1.9.1: a null-input invoke on a checkpoint-less thread
+        // throws "Resume request without a valid checkpoint!" — it does NOT bootstrap a fresh run.
+        // The runner therefore needs an explicit restart path (see the test below).
+        ExecutionRunner.Outcome outcome = runner.resume(taskId);
+
+        assertThat(outcome.status()).isEqualTo(TaskStatus.FAILED);
+        assertThat(outcome.detail()).contains("Resume request without a valid checkpoint");
+        assertThat(status(taskId)).isEqualTo("FAILED");
+    }
+
+    @Test
+    @Timeout(60)
+    void startOrResumeOnZeroCheckpointRunningTaskRestartsFresh() throws Exception {
+        UUID taskId = UUID.randomUUID();
+        routeChain(taskId, null);
+        taskStore.transition(taskId, TaskStatus.RUNNING);
+        chatModel.enqueue(
+                ControlledChatModel.text("adaptive agents"),
+                ControlledChatModel.text("Adaptive agents adapt at runtime."));
+
+        // RUNNING with zero checkpoints (seeded, never executed): startOrResumeAsync must take the
+        // restart path — envelope-derived initial input, no re-transition — and complete the run.
+        ExecutionRunner.Outcome outcome = runner.startOrResumeAsync(taskId).get(20, TimeUnit.SECONDS);
+
+        assertThat(outcome.status()).isEqualTo(TaskStatus.SUCCEEDED);
+        assertThat(status(taskId)).isEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("SELECT result FROM tasks WHERE task_id = ?",
+                String.class, taskId)).isNotBlank();
+        assertThat(countNodeStart(taskId, "plan")).isEqualTo(1);
+        assertThat(countNodeStart(taskId, "cite")).isEqualTo(1);
+        assertThat(countProgress(taskId, "TASK_COMPLETED")).isEqualTo(1);
+    }
+
+    @Test
+    @Timeout(60)
+    void startOrResumeOnCheckpointedRunningTaskResumes() throws Exception {
+        UUID taskId = UUID.randomUUID();
+        routeChain(taskId, null);
+        CountDownLatch summarizeGate = new CountDownLatch(1);
+        chatModel.blockCall(2, summarizeGate);
+        chatModel.enqueue(
+                ControlledChatModel.text("adaptive agents"),
+                ControlledChatModel.text("Adaptive agents adapt at runtime."));
+
+        CompletableFuture<ExecutionRunner.Outcome> abandoned = runner.executeAsync(taskId);
+        awaitCheckpointCount(taskId, 2);
+
+        // The abandoned run stays blocked on its gate forever (a simulated dead process); only
+        // the startOrResume dispatch may carry the task to a terminal status.
+        ExecutionRunner secondRunner =
+                new ExecutionRunner(topologyRegistry, taskStore, progressService, dataSource);
+        ExecutionRunner.Outcome outcome = secondRunner.startOrResumeAsync(taskId).get(20, TimeUnit.SECONDS);
+
+        assertThat(outcome.status()).isEqualTo(TaskStatus.SUCCEEDED);
+        assertThat(status(taskId)).isEqualTo("SUCCEEDED");
+        assertThat(countNodeStart(taskId, "plan")).isEqualTo(1);
+        assertThat(countNodeStart(taskId, "search")).isEqualTo(1);
+    }
+
     private void routeChain(UUID taskId, Long deadlineMs) {
         TaskEnvelope envelope = new TaskEnvelope(taskId, "research", "research adaptive agents", 1, deadlineMs, null, null);
         taskStore.submitOrGet(envelope);

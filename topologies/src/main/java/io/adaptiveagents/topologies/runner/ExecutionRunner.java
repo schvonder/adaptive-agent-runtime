@@ -10,6 +10,10 @@ import io.adaptiveagents.core.store.TaskStore;
 import io.adaptiveagents.topologies.guard.BudgetExceededException;
 import io.adaptiveagents.topologies.guard.DeadlineExceededException;
 import io.adaptiveagents.topologies.registry.TopologyRegistry;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -37,7 +41,13 @@ import org.springframework.stereotype.Component;
  * <p>{@link #execute(UUID)} advances a ROUTED task to RUNNING, compiles its graph with a
  * {@link PostgresSaver} checkpoint saver and the task id as the LangGraph4j thread id, then invokes
  * it. {@link #resume(UUID)} re-invokes the same compiled graph (same thread id) with a {@code null}
- * input so langgraph4j resumes from the last checkpoint, skipping completed nodes.</p>
+ * input so langgraph4j resumes from the last checkpoint, skipping completed nodes.
+ * {@link #restart(UUID)} serves a RUNNING task whose thread has <em>no</em> checkpoints yet (seeded
+ * RUNNING but never executed — verified empirically: a {@code null}-input invoke on a
+ * checkpoint-less thread throws {@code Resume request without a valid checkpoint!}): it invokes
+ * with the envelope-derived initial input but, unlike {@code execute}, does not re-transition the
+ * status, which is already RUNNING. {@link #startOrResumeAsync(UUID)} picks between the two by
+ * checkpoint presence for startup rescan.</p>
  *
  * <p>Both run the graph invoke on an unpooled virtual-thread executor and block until it completes.
  * The final state maps to a terminal status in precedence order: a {@code guardRejected} value of
@@ -96,7 +106,7 @@ public final class ExecutionRunner {
     public Outcome execute(UUID taskId) {
         TaskRecord task = requireStatus(taskId, TaskStatus.ROUTED);
         taskStore.transition(taskId, TaskStatus.RUNNING);
-        return runAndMap(taskId, task, false);
+        return runAndMap(taskId, task, initialState(task));
     }
 
     /** Async wrapper over {@link #execute(UUID)} on the unpooled virtual-thread executor. */
@@ -114,12 +124,58 @@ public final class ExecutionRunner {
      */
     public Outcome resume(UUID taskId) {
         TaskRecord task = requireStatus(taskId, TaskStatus.RUNNING);
-        return runAndMap(taskId, task, true);
+        return runAndMap(taskId, task, null);
     }
 
     /** Async wrapper over {@link #resume(UUID)} on the unpooled virtual-thread executor. */
     public CompletableFuture<Outcome> resumeAsync(UUID taskId) {
         return CompletableFuture.supplyAsync(() -> resume(taskId), VIRTUAL);
+    }
+
+    /**
+     * Runs a RUNNING task that has never checkpointed (blocking): the graph is invoked with the
+     * envelope-derived initial input — the same invocation shape as {@link #execute(UUID)} minus
+     * the ROUTED→RUNNING transition, which the caller has already performed.
+     *
+     * @param taskId id of a task whose status is RUNNING and whose checkpoint thread is empty
+     * @throws IllegalTaskStateException when the task is missing or not RUNNING
+     */
+    public Outcome restart(UUID taskId) {
+        TaskRecord task = requireStatus(taskId, TaskStatus.RUNNING);
+        return runAndMap(taskId, task, initialState(task));
+    }
+
+    /**
+     * Async wrapper over {@link #restart(UUID)} on the unpooled virtual-thread executor.
+     */
+    public CompletableFuture<Outcome> restartAsync(UUID taskId) {
+        return CompletableFuture.supplyAsync(() -> restart(taskId), VIRTUAL);
+    }
+
+    /**
+     * Startup-rescan entry point: dispatches a RUNNING task by checkpoint presence — with
+     * checkpoints it resumes from the last one, without them (seeded RUNNING but never executed)
+     * it restarts with a fresh initial input. Fire-and-forget on the unpooled virtual-thread
+     * executor; graph-level failures fold to FAILED through the runner's outcome mapping.
+     */
+    public CompletableFuture<Outcome> startOrResumeAsync(UUID taskId) {
+        return hasCheckpoints(taskId) ? resumeAsync(taskId) : restartAsync(taskId);
+    }
+
+    private boolean hasCheckpoints(UUID taskId) {
+        // The saver stores the task id as thread_name; see LeakFreePostgresSaver for the join. A
+        // missing saver table means no graph ever ran here, which is the restart path.
+        String sql = "SELECT COUNT(*) FROM lg4jcheckpoint c "
+                + "JOIN lg4jthread t ON t.thread_id = c.thread_id WHERE t.thread_name = ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, taskId.toString());
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() && rs.getInt(1) > 0;
+            }
+        } catch (SQLException e) {
+            return false;
+        }
     }
 
     private TaskRecord requireStatus(UUID taskId, TaskStatus required) {
@@ -134,9 +190,9 @@ public final class ExecutionRunner {
         return task;
     }
 
-    private Outcome runAndMap(UUID taskId, TaskRecord task, boolean resume) {
+    private Outcome runAndMap(UUID taskId, TaskRecord task, Map<String, Object> input) {
         try {
-            Map<String, Object> data = VIRTUAL.submit(() -> invokeGraph(task, resume)).get();
+            Map<String, Object> data = VIRTUAL.submit(() -> invokeGraph(task, input)).get();
             return mapOutcome(taskId, data);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -151,15 +207,19 @@ public final class ExecutionRunner {
         }
     }
 
-    private Map<String, Object> invokeGraph(TaskRecord task, boolean resume) {
+    private Map<String, Object> invokeGraph(TaskRecord task, Map<String, Object> input) {
         StateGraph<? extends AgentState> graph = topologyRegistry.graphFor(task.topology());
         CompiledGraph<? extends AgentState> compiled = compile(graph);
         RunnableConfig config = RunnableConfig.builder().threadId(task.taskId().toString()).build();
-        Map<String, Object> input = resume ? null : Map.of(PROMPT_KEY, task.envelope().prompt());
         return compiled.invoke(input, config)
                 .map(AgentState::data)
                 .orElseThrow(() -> new IllegalStateException(
                         "Graph produced no final state for task " + task.taskId()));
+    }
+
+    /** A {@code null} input means "resume from the last checkpoint" in the langgraph4j invoke. */
+    private static Map<String, Object> initialState(TaskRecord task) {
+        return Map.of(PROMPT_KEY, task.envelope().prompt());
     }
 
     private CompiledGraph<? extends AgentState> compile(StateGraph<? extends AgentState> graph) {
