@@ -1,50 +1,103 @@
 package io.adaptiveagents.core.store;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.adaptiveagents.core.envelope.TaskEnvelope;
 import io.adaptiveagents.core.model.TaskStatus;
 import io.adaptiveagents.core.model.Topology;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
 import java.sql.ResultSet;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Repository
 public class TaskStore {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper mapper;
+    private final TransactionTemplate transactionTemplate;
 
-    public TaskStore(JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
+    public TaskStore(JdbcTemplate jdbcTemplate, ObjectMapper mapper, TransactionTemplate transactionTemplate) {
         this.jdbcTemplate = jdbcTemplate;
         this.mapper = mapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
-    public TaskRecord submitOrGet(TaskEnvelope envelope) {
-        try {
-            String envelopeJson = mapper.writeValueAsString(envelope);
-            jdbcTemplate.update(
-                    "INSERT INTO tasks (task_id, envelope, status, budget_usd, deadline_ms) VALUES (?, ?::jsonb, ?, ?, ?)",
-                    envelope.taskId(),
-                    envelopeJson,
-                    TaskStatus.SUBMITTED.name(),
-                    envelope.budgetUsd(),
-                    envelope.deadlineMs()
-            );
-        } catch (DuplicateKeyException e) {
-            // Already exists, ignore and fetch below to resolve idempotently
-        } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("duplicate key value")) {
-                // Raw fallback in case DuplicateKeyException isn't thrown natively by the driver wrapper
-            } else {
-                throw new RuntimeException(e);
+    /**
+     * Idempotent task submission, guarded by a transaction-scoped advisory lock on the task id.
+     *
+     * <p>Runs {@code pg_advisory_xact_lock(hashtext(task_id))}, the existence check and the insert
+     * inside ONE transaction, so concurrent submissions of the same task id (including at-least-once
+     * redelivery) serialize: exactly one caller inserts and observes {@code created == true}; every
+     * other caller takes the lock after that commit, sees the existing row, and observes
+     * {@code created == false} without any exception. The tasks primary key remains the final
+     * uniqueness guarantee; the {@link DuplicateKeyException} catch is a defensive fallback for
+     * callers that somehow bypass the lock.
+     *
+     * <p>Safe to call standalone (opens its own transaction) or from inside
+     * {@link #withTaskLock(UUID, Supplier)} — the advisory lock is re-entrant within a transaction.
+     */
+    public SubmitResult submitOrGet(TaskEnvelope envelope) {
+        String envelopeJson = serialize(envelope);
+        return transactionTemplate.execute(tx -> {
+            acquireTaskLock(envelope.taskId());
+            Optional<TaskRecord> existing = find(envelope.taskId());
+            if (existing.isPresent()) {
+                return new SubmitResult(existing.get(), false);
             }
+            try {
+                jdbcTemplate.update(
+                        "INSERT INTO tasks (task_id, envelope, status, budget_usd, deadline_ms) VALUES (?, ?::jsonb, ?, ?, ?)",
+                        envelope.taskId(),
+                        envelopeJson,
+                        TaskStatus.SUBMITTED.name(),
+                        envelope.budgetUsd(),
+                        envelope.deadlineMs()
+                );
+            } catch (DuplicateKeyException e) {
+                // Unreachable under the advisory lock; kept so any caller bypassing the lock still
+                // gets 200-with-existing semantics instead of an error.
+                return new SubmitResult(find(envelope.taskId()).orElseThrow(() -> e), false);
+            }
+            return new SubmitResult(find(envelope.taskId()).orElseThrow(), true);
+        });
+    }
+
+    /**
+     * Runs {@code body} inside a transaction holding the transaction-scoped advisory lock for
+     * {@code taskId} ({@code pg_advisory_xact_lock(hashtext(task_id))}), serializing all
+     * lock-scoped work for that task — submission, status check, routing transitions — across
+     * threads and processes. A duplicate submission blocks until the lock holder commits, then
+     * observes the committed state.
+     */
+    public <T> T withTaskLock(UUID taskId, Supplier<T> body) {
+        return transactionTemplate.execute(tx -> {
+            acquireTaskLock(taskId);
+            return body.get();
+        });
+    }
+
+    private void acquireTaskLock(UUID taskId) {
+        // pg_advisory_xact_lock signals failure only by throwing; its void result is discarded.
+        // The ResultSetExtractor form consumes the single produced row, which forces evaluation of
+        // the volatile function (and therefore the lock acquisition) on the tx-bound connection.
+        jdbcTemplate.query("SELECT pg_advisory_xact_lock(hashtext(?))", rs -> {
+            rs.next();
+            return null;
+        }, taskId.toString());
+    }
+
+    private String serialize(TaskEnvelope envelope) {
+        try {
+            return mapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
-        return find(envelope.taskId()).orElseThrow(() -> new IllegalStateException("Task should exist"));
     }
 
     public Optional<TaskRecord> find(UUID taskId) {

@@ -12,12 +12,21 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -44,7 +53,11 @@ public class TaskStoreTest {
         flyway.migrate();
 
         jdbcTemplate = new JdbcTemplate(dataSource);
-        taskStore = new TaskStore(jdbcTemplate, new ObjectMapper());
+        taskStore = new TaskStore(jdbcTemplate, new ObjectMapper(), transactionTemplate());
+    }
+
+    private static TransactionTemplate transactionTemplate() {
+        return new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
 
     @AfterAll
@@ -66,7 +79,7 @@ public class TaskStoreTest {
     @Test
     void fullLifecycle() {
         TaskEnvelope env = createEnvelope();
-        TaskRecord record = taskStore.submitOrGet(env);
+        TaskRecord record = taskStore.submitOrGet(env).record();
         
         assertThat(record.status()).isEqualTo(TaskStatus.SUBMITTED);
         assertThat(record.version()).isEqualTo(0);
@@ -87,12 +100,49 @@ public class TaskStoreTest {
     @Test
     void duplicateInsertResolvesToExisting() {
         TaskEnvelope env = createEnvelope();
-        TaskRecord r1 = taskStore.submitOrGet(env);
-        TaskRecord r2 = taskStore.submitOrGet(env);
-        
-        assertThat(r1.taskId()).isEqualTo(r2.taskId());
-        assertThat(r1.status()).isEqualTo(r2.status());
-        assertThat(r1.version()).isEqualTo(r2.version());
+        SubmitResult r1 = taskStore.submitOrGet(env);
+        SubmitResult r2 = taskStore.submitOrGet(env);
+
+        assertThat(r1.created()).isTrue();
+        assertThat(r2.created()).isFalse();
+        assertThat(r1.record().taskId()).isEqualTo(r2.record().taskId());
+        assertThat(r1.record().status()).isEqualTo(r2.record().status());
+        assertThat(r1.record().version()).isEqualTo(r2.record().version());
+    }
+
+    @Test
+    void concurrentDuplicateSubmissionsYieldExactlyOneCreation() throws Exception {
+        TaskEnvelope env = createEnvelope();
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CyclicBarrier barrier = new CyclicBarrier(threads);
+            List<Future<SubmitResult>> submissions = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                submissions.add(pool.submit(() -> {
+                    barrier.await(10, TimeUnit.SECONDS);
+                    return taskStore.submitOrGet(env);
+                }));
+            }
+
+            int created = 0;
+            for (Future<SubmitResult> submission : submissions) {
+                SubmitResult result = submission.get(20, TimeUnit.SECONDS);
+                assertThat(result.record().taskId()).isEqualTo(env.taskId());
+                assertThat(result.record().status()).isEqualTo(TaskStatus.SUBMITTED);
+                assertThat(result.record().version()).isZero();
+                if (result.created()) {
+                    created++;
+                }
+            }
+            assertThat(created).isEqualTo(1);
+
+            Integer rows = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM tasks WHERE task_id = ?", Integer.class, env.taskId());
+            assertThat(rows).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test
@@ -117,12 +167,12 @@ public class TaskStoreTest {
     @Test
     void optimisticConcurrency() throws Exception {
         TaskEnvelope env = createEnvelope();
-        TaskRecord record = taskStore.submitOrGet(env);
+        taskStore.submitOrGet(env);
         
         java.util.concurrent.CountDownLatch latch1 = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch latch2 = new java.util.concurrent.CountDownLatch(1);
         
-        TaskStore slowStore = new TaskStore(jdbcTemplate, new ObjectMapper()) {
+        TaskStore slowStore = new TaskStore(jdbcTemplate, new ObjectMapper(), transactionTemplate()) {
             @Override
             public Optional<TaskRecord> find(UUID taskId) {
                 Optional<TaskRecord> r = super.find(taskId);

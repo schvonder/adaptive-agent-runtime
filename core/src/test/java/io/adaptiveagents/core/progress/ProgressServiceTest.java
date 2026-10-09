@@ -12,6 +12,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -45,7 +47,8 @@ public class ProgressServiceTest {
         flyway.migrate();
 
         jdbcTemplate = new JdbcTemplate(dataSource);
-        taskStore = new TaskStore(jdbcTemplate, mapper);
+        taskStore = new TaskStore(jdbcTemplate, mapper,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
         progressService = new ProgressService(jdbcTemplate, mapper);
     }
 

@@ -9,12 +9,21 @@ import io.adaptiveagents.core.model.Topology;
 import io.adaptiveagents.core.progress.ProgressService;
 import io.adaptiveagents.core.store.TaskStore;
 import io.adaptiveagents.topologies.registry.TopologyRegistry;
+import io.adaptiveagents.topologies.routing.DecisionSource;
+import io.adaptiveagents.topologies.routing.RoutingDecision;
+import io.adaptiveagents.topologies.routing.RoutingService;
 import io.adaptiveagents.topologies.testutil.ControlledChatModel;
 import io.adaptiveagents.topologies.testutil.MutableSearchTool;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -81,6 +90,9 @@ class ExecutionRunnerIntegrationTest {
 
     @Autowired
     ExecutionRunner runner;
+
+    @Autowired
+    RoutingService routingService;
 
     @Autowired
     TopologyRegistry topologyRegistry;
@@ -261,6 +273,82 @@ class ExecutionRunnerIntegrationTest {
         assertThat(status(taskId)).isEqualTo("SUCCEEDED");
         assertThat(countNodeStart(taskId, "plan")).isEqualTo(1);
         assertThat(countNodeStart(taskId, "search")).isEqualTo(1);
+    }
+
+    @Test
+    @Timeout(60)
+    void concurrentDuplicateRoutesResolveToSingleRoutingAndExecution() throws Exception {
+        UUID taskId = UUID.randomUUID();
+        TaskEnvelope envelope =
+                new TaskEnvelope(taskId, "research", "research adaptive agents", 1, null, null, Topology.CHAIN);
+        chatModel.enqueue(
+                ControlledChatModel.text("search adaptive agents"),
+                ControlledChatModel.text("Adaptive agents adapt at runtime."));
+
+        int threads = 4;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<Future<RoutingDecision>> routes;
+        try {
+            CyclicBarrier barrier = new CyclicBarrier(threads);
+            routes = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                routes.add(pool.submit(() -> {
+                    barrier.await(10, TimeUnit.SECONDS);
+                    return routingService.route(envelope, System.currentTimeMillis());
+                }));
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        for (Future<RoutingDecision> route : routes) {
+            RoutingDecision decision = route.get(20, TimeUnit.SECONDS);
+            assertThat(decision.topology()).isEqualTo(Topology.CHAIN);
+            assertThat(decision.source()).isEqualTo(DecisionSource.OVERRIDE);
+        }
+        assertThat(status(taskId)).isEqualTo("ROUTED");
+
+        ExecutionRunner.Outcome outcome = runner.executeAsync(taskId).get(20, TimeUnit.SECONDS);
+        assertThat(outcome.status()).isEqualTo(TaskStatus.SUCCEEDED);
+
+        // Late duplicate after completion (Kafka at-least-once redelivery shape): resolves to the
+        // recorded decision without re-routing or re-executing.
+        RoutingDecision late = routingService.route(envelope, System.currentTimeMillis());
+        assertThat(late.topology()).isEqualTo(Topology.CHAIN);
+        assertThat(late.source()).isEqualTo(DecisionSource.OVERRIDE);
+        assertThat(status(taskId)).isEqualTo("SUCCEEDED");
+        assertThat(countNodeStart(taskId, "plan")).isEqualTo(1);
+        assertThat(countProgress(taskId, "TASK_COMPLETED")).isEqualTo(1);
+    }
+
+    @Test
+    @Timeout(60)
+    void duplicateRouteWhileRunningReturnsExistingDecision() throws Exception {
+        UUID taskId = UUID.randomUUID();
+        TaskEnvelope envelope =
+                new TaskEnvelope(taskId, "research", "research adaptive agents", 1, null, null, Topology.CHAIN);
+        routingService.route(envelope, System.currentTimeMillis());
+        CountDownLatch summarizeGate = new CountDownLatch(1);
+        chatModel.blockCall(2, summarizeGate);
+        chatModel.enqueue(
+                ControlledChatModel.text("search adaptive agents"),
+                ControlledChatModel.text("Adaptive agents adapt at runtime."));
+
+        CompletableFuture<ExecutionRunner.Outcome> run = runner.executeAsync(taskId);
+        awaitCheckpointCount(taskId, 2);
+
+        // Redelivery while the graph is executing: existing decision, no state regression, and the
+        // in-flight run stays the only one.
+        RoutingDecision duplicate = routingService.route(envelope, System.currentTimeMillis());
+        assertThat(duplicate.topology()).isEqualTo(Topology.CHAIN);
+        assertThat(duplicate.source()).isEqualTo(DecisionSource.OVERRIDE);
+        assertThat(status(taskId)).isEqualTo("RUNNING");
+
+        summarizeGate.countDown();
+        assertThat(run.get(20, TimeUnit.SECONDS).status()).isEqualTo(TaskStatus.SUCCEEDED);
+        assertThat(countNodeStart(taskId, "plan")).isEqualTo(1);
+        assertThat(countNodeStart(taskId, "summarize")).isEqualTo(1);
+        assertThat(countProgress(taskId, "TASK_COMPLETED")).isEqualTo(1);
     }
 
     private void routeChain(UUID taskId, Long deadlineMs) {

@@ -26,7 +26,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SimpleDriverDataSource;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -79,7 +81,8 @@ class ResumeAfterKillE2eTest {
         dataSource.setUsername(SingletonPostgres.getUsername());
         dataSource.setPassword(SingletonPostgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
-        taskStore = new TaskStore(jdbc, new ObjectMapper());
+        taskStore = new TaskStore(jdbc, new ObjectMapper(),
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
         routingService = new RoutingService(taskStore, new StubClassifier());
     }
 
