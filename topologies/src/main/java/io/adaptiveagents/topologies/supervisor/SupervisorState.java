@@ -42,6 +42,9 @@ public final class SupervisorState extends AgentState {
     /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
     public static final String GUARD_REJECTED = "guardRejected";
 
+    /** JSON snapshot of the team artifact so far, folded when a guard rejects a node boundary. */
+    public static final String PARTIAL_RESULT = "partialResult";
+
     /** Final merged result JSON produced by the finalize node, or {@code null} on failure. */
     public static final String RESULT = "result";
 
@@ -95,6 +98,10 @@ public final class SupervisorState extends AgentState {
 
     public String error() {
         return stringValue(ERROR);
+    }
+
+    public String partialResult() {
+        return stringValue(PARTIAL_RESULT);
     }
 
     private String stringValue(String key) {

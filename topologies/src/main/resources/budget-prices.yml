@@ -1,0 +1,13 @@
+# Per-1M-token USD prices keyed by model id (as reported in the model response
+# metadata). The mandatory "default" entry prices any model that is not listed,
+# including responses that carry no model id.
+models:
+  default:
+    input-per-1m: 1.00
+    output-per-1m: 2.00
+  gpt-4o-mini:
+    input-per-1m: 0.15
+    output-per-1m: 0.60
+  gpt-4o:
+    input-per-1m: 2.50
+    output-per-1m: 10.00

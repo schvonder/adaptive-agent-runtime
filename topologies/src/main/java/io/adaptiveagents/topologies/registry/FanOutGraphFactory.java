@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.fanout.FanOutState;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
@@ -44,8 +45,10 @@ import org.springframework.ai.chat.model.ChatResponse;
  * in-branch and returns a failure marker on the {@link FanOutState#FAILURES} appender, so the gather
  * node still runs with the survivor sections and {@code degraded=true}. A {@link GuardException} at
  * a branch or gather boundary is folded with the {@link FanOutState#GUARD_REJECTED} flag so the
- * runner can map it to a terminal status. Only when every branch fails is {@link FanOutState#ERROR}
- * set.</p>
+ * runner can map it to a terminal status (FAN_OUT degradation: reduce width — a branch whose
+ * boundary is rejected is skipped with a failure marker; the gather fold preserves the gathered
+ * sections as the {@link FanOutState#PARTIAL_RESULT} snapshot). Only when every branch fails is
+ * {@link FanOutState#ERROR} set.</p>
  */
 public final class FanOutGraphFactory implements GraphFactory {
 
@@ -67,17 +70,20 @@ public final class FanOutGraphFactory implements GraphFactory {
     private final ChatClient.Builder chatClientBuilder;
     private final SearchTool searchTool;
     private final NodeGuard nodeGuard;
+    private final CostTracker costTracker;
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
      *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param searchTool        workload search tool invoked directly by each branch
      * @param nodeGuard         per-node budget/deadline seam
+     * @param costTracker       per-response token/cost accounting
      */
-    public FanOutGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard) {
+    public FanOutGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
+        this.costTracker = costTracker;
     }
 
     @Override
@@ -128,7 +134,7 @@ public final class FanOutGraphFactory implements GraphFactory {
             List<SearchResult> results = searchTool.search(state.prompt() + " aspect " + branch);
             String section = results.isEmpty()
                     ? "No sources found for aspect " + branch
-                    : summarize(chatClient, branch, results);
+                    : summarize(chatClient, branch, results, taskId);
             if (section == null || section.isBlank()) {
                 return failure(branch, "empty summary response");
             }
@@ -145,10 +151,13 @@ public final class FanOutGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(GATHER_NODE, taskId);
             } catch (GuardException e) {
+                List<String> sections = state.sections();
+                List<String> failures = state.failures();
                 return Map.of(
                         FanOutState.DEGRADED, true,
                         FanOutState.ERROR, "gather failed: " + e.getMessage(),
-                        FanOutState.GUARD_REJECTED, e.getClass().getSimpleName());
+                        FanOutState.GUARD_REJECTED, e.getClass().getSimpleName(),
+                        FanOutState.PARTIAL_RESULT, buildResultJson(sections, failures, true));
             }
             List<String> sections = state.sections();
             List<String> failures = state.failures();
@@ -174,12 +183,13 @@ public final class FanOutGraphFactory implements GraphFactory {
                 FanOutState.GUARD_REJECTED, e.getClass().getSimpleName());
     }
 
-    private static String summarize(ChatClient chatClient, int branch, List<SearchResult> results) {
+    private String summarize(ChatClient chatClient, int branch, List<SearchResult> results, UUID taskId) {
         StringBuilder sb = new StringBuilder("Summarize these results for aspect ").append(branch).append(":\n");
         for (SearchResult result : results) {
             sb.append("- ").append(result.title()).append(": ").append(result.snippet()).append("\n");
         }
         ChatResponse response = chatClient.prompt().user(sb.toString()).call().chatResponse();
+        costTracker.record(branchNodeId(branch), taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
     }
 

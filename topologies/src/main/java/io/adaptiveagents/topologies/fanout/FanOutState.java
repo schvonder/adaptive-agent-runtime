@@ -35,6 +35,9 @@ public final class FanOutState extends AgentState {
     /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
     public static final String GUARD_REJECTED = "guardRejected";
 
+    /** JSON snapshot of gathered sections, folded when a guard rejects a node boundary. */
+    public static final String PARTIAL_RESULT = "partialResult";
+
     public FanOutState(Map<String, Object> initData) {
         super(initData);
     }
@@ -57,6 +60,10 @@ public final class FanOutState extends AgentState {
 
     public String error() {
         return stringValue(ERROR);
+    }
+
+    public String partialResult() {
+        return stringValue(PARTIAL_RESULT);
     }
 
     public boolean degraded() {

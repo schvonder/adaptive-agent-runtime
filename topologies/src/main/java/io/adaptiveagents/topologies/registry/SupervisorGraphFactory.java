@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.topologies.supervisor.SupervisorState;
@@ -40,8 +41,11 @@ import org.springframework.ai.chat.model.ChatResponse;
  * folds any failure into {@link SupervisorState#ERROR} + {@code degraded=true}, after which the
  * supervisor routes to {@code finalize} with a partial result. A {@link GuardException} at a
  * researcher/writer/critic/finalize boundary is folded with {@link SupervisorState#GUARD_REJECTED}
- * so the runner can map it to a terminal status. The critic verdict is parsed deterministically:
- * anything not starting with {@code ACCEPT} is treated as {@code REVISE}.</p>
+ * so the runner can map it to a terminal status; every guard fold preserves the team artifact so
+ * far (research/draft/critique) as the {@link SupervisorState#PARTIAL_RESULT} snapshot — the
+ * supervisor still routes to {@code finalize}, so a budget cut finishes with the partial artifact
+ * instead of dropping it. The critic verdict is parsed deterministically: anything not starting
+ * with {@code ACCEPT} is treated as {@code REVISE}.</p>
  */
 public final class SupervisorGraphFactory implements GraphFactory {
 
@@ -74,17 +78,20 @@ public final class SupervisorGraphFactory implements GraphFactory {
     private final ChatClient.Builder chatClientBuilder;
     private final SearchTool searchTool;
     private final NodeGuard nodeGuard;
+    private final CostTracker costTracker;
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
      *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param searchTool        workload search tool invoked directly by the researcher node
      * @param nodeGuard         per-node budget/deadline seam
+     * @param costTracker       per-response token/cost accounting
      */
-    public SupervisorGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard) {
+    public SupervisorGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
+        this.costTracker = costTracker;
     }
 
     @Override
@@ -152,11 +159,11 @@ public final class SupervisorGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(RESEARCHER_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(RESEARCHER_NODE, e);
+                return foldGuard(RESEARCHER_NODE, e, state);
             }
             try {
                 List<SearchResult> results = searchTool.search(state.prompt());
-                String research = results.isEmpty() ? "No sources found." : distill(chatClient, state.prompt(), results);
+                String research = results.isEmpty() ? "No sources found." : distill(chatClient, state.prompt(), results, taskId);
                 if (research == null || research.isBlank()) {
                     return fold("researcher: empty research response");
                 }
@@ -174,10 +181,10 @@ public final class SupervisorGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(WRITER_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(WRITER_NODE, e);
+                return foldGuard(WRITER_NODE, e, state);
             }
             try {
-                String draft = writeDraft(chatClient, state);
+                String draft = writeDraft(chatClient, state, taskId);
                 if (draft == null || draft.isBlank()) {
                     return fold("writer: empty draft response");
                 }
@@ -195,10 +202,10 @@ public final class SupervisorGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(CRITIC_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(CRITIC_NODE, e);
+                return foldGuard(CRITIC_NODE, e, state);
             }
             try {
-                String verdict = critique(chatClient, state.draft());
+                String verdict = critique(chatClient, state.draft(), taskId);
                 if (verdict == null || verdict.isBlank()) {
                     return fold("critic: empty verdict response");
                 }
@@ -222,7 +229,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(FINALIZE_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(FINALIZE_NODE, e);
+                return foldGuard(FINALIZE_NODE, e, state);
             }
             boolean forcedFinish = !state.accepted() && state.criticRounds() >= MAX_CRITIC_ROUNDS;
             boolean degraded = state.degraded() || forcedFinish;
@@ -245,16 +252,16 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return false;
     }
 
-    private static String distill(ChatClient chatClient, String prompt, List<SearchResult> results) {
+    private String distill(ChatClient chatClient, String prompt, List<SearchResult> results, UUID taskId) {
         StringBuilder sb = new StringBuilder("Distill the following search results into concise research findings for: ")
                 .append(prompt).append("\n");
         for (SearchResult result : results) {
             sb.append("- ").append(result.title()).append(": ").append(result.snippet()).append("\n");
         }
-        return callText(chatClient, sb.toString());
+        return callText(chatClient, sb.toString(), taskId, RESEARCHER_NODE);
     }
 
-    private static String writeDraft(ChatClient chatClient, SupervisorState state) {
+    private String writeDraft(ChatClient chatClient, SupervisorState state, UUID taskId) {
         StringBuilder sb = new StringBuilder("Write a report draft (revision ")
                 .append(state.criticRounds() + 1)
                 .append(") based on the following research:\n")
@@ -263,14 +270,14 @@ public final class SupervisorGraphFactory implements GraphFactory {
         if (state.critique() != null) {
             sb.append("Address the previous critique:\n").append(state.critique()).append("\n");
         }
-        return callText(chatClient, sb.toString());
+        return callText(chatClient, sb.toString(), taskId, WRITER_NODE);
     }
 
-    private static String critique(ChatClient chatClient, String draft) {
+    private String critique(ChatClient chatClient, String draft, UUID taskId) {
         String prompt = "Critique the following report draft and respond with a single line starting with "
                 + ACCEPT_PREFIX + " if it is ready, or " + REVISE_PREFIX + " followed by specific feedback:\n\n"
                 + draft;
-        return callText(chatClient, prompt);
+        return callText(chatClient, prompt, taskId, CRITIC_NODE);
     }
 
     private static String buildResultJson(SupervisorState state, boolean degraded) {
@@ -289,15 +296,17 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 SupervisorState.ERROR, message);
     }
 
-    private static Map<String, Object> foldGuard(String stage, GuardException e) {
+    private static Map<String, Object> foldGuard(String stage, GuardException e, SupervisorState state) {
         return Map.of(
                 SupervisorState.DEGRADED, true,
                 SupervisorState.ERROR, stage + ": guard rejected: " + e.getMessage(),
-                SupervisorState.GUARD_REJECTED, e.getClass().getSimpleName());
+                SupervisorState.GUARD_REJECTED, e.getClass().getSimpleName(),
+                SupervisorState.PARTIAL_RESULT, buildResultJson(state, true));
     }
 
-    private static String callText(ChatClient chatClient, String userPrompt) {
+    private String callText(ChatClient chatClient, String userPrompt, UUID taskId, String nodeName) {
         ChatResponse response = chatClient.prompt().user(userPrompt).call().chatResponse();
+        costTracker.record(nodeName, taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
     }
 

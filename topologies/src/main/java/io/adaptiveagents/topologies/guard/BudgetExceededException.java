@@ -1,11 +1,9 @@
 package io.adaptiveagents.topologies.guard;
 
 /**
- * Raised by the guard when a task's budget is already exhausted at a node boundary.
- *
- * <p>This is the structural placeholder: the full per-node token/cost accounting lands in T19, so
- * today the guard only rejects a task whose declared {@code budget_usd} is already non-positive.
- * See {@code TaskGuard} javadoc.</p>
+ * Raised by the guard when a task's budget is exhausted at a node boundary: either the declared
+ * {@code budget_usd} is non-positive, or the {@link io.adaptiveagents.topologies.budget.CostTracker}
+ * spend accumulated from model responses has reached it.
  */
 public class BudgetExceededException extends GuardException {
     public BudgetExceededException(String message) {

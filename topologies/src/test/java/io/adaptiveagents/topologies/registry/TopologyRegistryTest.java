@@ -9,13 +9,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TopologyRegistryTest {
 
-    // Wiring-only factory: no ChatClient.Builder needed to assert registry routing.
+    // Wiring-only factory: no ChatClient.Builder or CostTracker needed to assert registry routing.
     private final TopologyRegistry registry =
             new TopologyRegistry(
-                    new SoloGraphFactory(null, null, new NoOpGuard()),
-                    new ChainGraphFactory(null, null, null, new NoOpGuard()),
-                    new FanOutGraphFactory(null, null, new NoOpGuard()),
-                    new SupervisorGraphFactory(null, null, new NoOpGuard()));
+                    new SoloGraphFactory(null, null, new NoOpGuard(), null),
+                    new ChainGraphFactory(null, null, null, new NoOpGuard(), null),
+                    new FanOutGraphFactory(null, null, new NoOpGuard(), null),
+                    new SupervisorGraphFactory(null, null, new NoOpGuard(), null));
 
     @Test
     void mapsEveryTopologyToItsFactory() {

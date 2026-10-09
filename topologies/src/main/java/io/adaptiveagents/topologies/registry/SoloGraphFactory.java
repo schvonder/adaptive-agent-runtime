@@ -2,6 +2,10 @@ package io.adaptiveagents.topologies.registry;
 
 import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.topologies.solo.SoloState;
@@ -26,11 +30,14 @@ import org.springframework.ai.chat.model.ChatResponse;
  * <p>The node never rethrows past the graph: tool errors and loop exhaustion are folded into
  * {@link SoloState#ERROR} plus {@code degraded=true}, so a bad run degrades the state instead of
  * crashing the topology. A {@link GuardException} at the loop boundary is folded separately with the
- * {@link SoloState#GUARD_REJECTED} flag so the runner can map it to a terminal status.</p>
+ * {@link SoloState#GUARD_REJECTED} flag so the runner can map it to a terminal status; the tool
+ * transcript of completed iterations is preserved as the {@link SoloState#PARTIAL_RESULT} snapshot
+ * (SOLO degradation: stop).</p>
  */
 public final class SoloGraphFactory implements GraphFactory {
 
     private static final Logger log = LoggerFactory.getLogger(SoloGraphFactory.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     static final String AGENT_NODE = "solo-agent";
     public static final int MAX_ITERATIONS = 3;
@@ -38,17 +45,20 @@ public final class SoloGraphFactory implements GraphFactory {
     private final ChatClient.Builder chatClientBuilder;
     private final ResearchTools researchTools;
     private final NodeGuard nodeGuard;
+    private final CostTracker costTracker;
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
      *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
      * @param researchTools     workload tool surface registered with the model
      * @param nodeGuard         per-iteration budget/deadline seam
+     * @param costTracker       per-response token/cost accounting
      */
-    public SoloGraphFactory(ChatClient.Builder chatClientBuilder, ResearchTools researchTools, NodeGuard nodeGuard) {
+    public SoloGraphFactory(ChatClient.Builder chatClientBuilder, ResearchTools researchTools, NodeGuard nodeGuard, CostTracker costTracker) {
         this.chatClientBuilder = chatClientBuilder;
         this.researchTools = researchTools;
         this.nodeGuard = nodeGuard;
+        this.costTracker = costTracker;
     }
 
     @Override
@@ -80,7 +90,8 @@ public final class SoloGraphFactory implements GraphFactory {
                             SoloState.DEGRADED, true,
                             SoloState.ERROR, "guard rejected: " + e.getMessage(),
                             SoloState.GUARD_REJECTED, e.getClass().getSimpleName(),
-                            SoloState.TOOL_TRANSCRIPT, transcript);
+                            SoloState.TOOL_TRANSCRIPT, transcript,
+                            SoloState.PARTIAL_RESULT, transcriptJson(transcript));
                 }
 
                 try {
@@ -89,6 +100,7 @@ public final class SoloGraphFactory implements GraphFactory {
                             .tools(researchTools)
                             .call()
                             .chatResponse();
+                    costTracker.record(AGENT_NODE, taskId, response);
                     String text = response.getResult() == null ? null : response.getResult().getOutput().getText();
                     if (text != null && !text.isBlank()) {
                         transcript.add("iteration " + i + ": final answer");
@@ -108,6 +120,13 @@ public final class SoloGraphFactory implements GraphFactory {
                     SoloState.ERROR, error != null ? error : "exceeded " + MAX_ITERATIONS + " iterations",
                     SoloState.TOOL_TRANSCRIPT, transcript);
         };
+    }
+
+    private static String transcriptJson(List<String> transcript) {
+        ObjectNode root = MAPPER.createObjectNode();
+        ArrayNode entries = root.putArray("toolTranscript");
+        transcript.forEach(entries::add);
+        return root.toString();
     }
 
     private ChatClient buildChatClient() {

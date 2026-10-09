@@ -68,6 +68,7 @@ public final class ExecutionRunner {
     private static final String RESULT_KEY = "result";
     private static final String ERROR_KEY = "error";
     private static final String GUARD_REJECTED_KEY = "guardRejected";
+    private static final String PARTIAL_RESULT_KEY = "partialResult";
 
     private static final String NODE_START = "NODE_START";
     private static final String TASK_COMPLETED = "TASK_COMPLETED";
@@ -239,24 +240,27 @@ public final class ExecutionRunner {
      * Maps the final graph state to a terminal task status. Order matters: a guard rejection wins
      * (deadline/budget), then a folded topology-level failure (error set — e.g. a Supervisor fold,
      * which still carries a partial result json), and only then a clean result. A partial result
-     * alongside an error is therefore FAILED, not SUCCEEDED.
+     * alongside an error is therefore FAILED, not SUCCEEDED. A guard rejection never drops the
+     * partial result the topology folded: it is embedded as {@code partial} in the error payload
+     * alongside the {@code message}.
      */
     private Outcome mapOutcome(UUID taskId, Map<String, Object> data) {
         Object guardRejected = data.get(GUARD_REJECTED_KEY);
         if (guardRejected != null) {
             String guard = guardRejected.toString();
             String error = stringOf(data.get(ERROR_KEY));
+            String payload = guardErrorJson(error, data.get(PARTIAL_RESULT_KEY));
             if (DeadlineExceededException.class.getSimpleName().equals(guard)) {
-                taskStore.completeTerminal(taskId, TaskStatus.DEADLINE_EXCEEDED, errorJson(error));
+                taskStore.completeTerminal(taskId, TaskStatus.DEADLINE_EXCEEDED, payload);
                 progressService.publish(taskId, TASK_DEADLINE_EXCEEDED, reasonPayload(error));
                 return new Outcome(TaskStatus.DEADLINE_EXCEEDED, error);
             }
             if (BudgetExceededException.class.getSimpleName().equals(guard)) {
-                taskStore.completeTerminal(taskId, TaskStatus.BUDGET_EXCEEDED, errorJson(error));
+                taskStore.completeTerminal(taskId, TaskStatus.BUDGET_EXCEEDED, payload);
                 progressService.publish(taskId, TASK_BUDGET_EXCEEDED, reasonPayload(error));
                 return new Outcome(TaskStatus.BUDGET_EXCEEDED, error);
             }
-            taskStore.completeTerminal(taskId, TaskStatus.FAILED, errorJson(error));
+            taskStore.completeTerminal(taskId, TaskStatus.FAILED, payload);
             progressService.publish(taskId, TASK_FAILED, reasonPayload(error));
             return new Outcome(TaskStatus.FAILED, error);
         }
@@ -302,6 +306,24 @@ public final class ExecutionRunner {
     private String errorJson(String message) {
         ObjectNode node = MAPPER.createObjectNode();
         node.put("message", message);
+        return node.toString();
+    }
+
+    /**
+     * Error payload for a guard rejection: {@code {"message": ..., "partial": ...}}. The partial is
+     * the JSON snapshot the topology folded (topology-specific state key {@code partialResult});
+     * a non-JSON partial is embedded as a plain string so nothing is dropped.
+     */
+    private String guardErrorJson(String message, Object partial) {
+        ObjectNode node = MAPPER.createObjectNode();
+        node.put("message", message);
+        if (partial != null) {
+            try {
+                node.set("partial", MAPPER.readTree(partial.toString()));
+            } catch (Exception e) {
+                node.put("partial", partial.toString());
+            }
+        }
         return node.toString();
     }
 

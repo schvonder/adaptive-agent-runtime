@@ -3,6 +3,8 @@ package io.adaptiveagents.topologies.testutil;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -46,6 +48,15 @@ public class ScriptedChatModel implements ChatModel {
 
     public static ChatResponse text(String text) {
         return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
+    }
+
+    /** Text response carrying model id + token usage metadata (for cost-tracker tests). */
+    public static ChatResponse textWithUsage(String text, String model, int promptTokens, int completionTokens) {
+        ChatResponseMetadata metadata = ChatResponseMetadata.builder()
+                .model(model)
+                .usage(new DefaultUsage(promptTokens, completionTokens))
+                .build();
+        return new ChatResponse(List.of(new Generation(new AssistantMessage(text))), metadata);
     }
 
     public static ChatResponse toolCall(String name, String arguments) {

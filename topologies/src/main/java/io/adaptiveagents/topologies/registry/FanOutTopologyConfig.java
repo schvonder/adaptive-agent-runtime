@@ -1,5 +1,6 @@
 package io.adaptiveagents.topologies.registry;
 
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.SearchTool;
 import org.springframework.ai.chat.client.ChatClient;
@@ -19,7 +20,8 @@ public class FanOutTopologyConfig {
     FanOutGraphFactory fanOutGraphFactory(
             ObjectProvider<ChatClient.Builder> chatClientBuilder,
             SearchTool searchTool,
-            NodeGuard nodeGuard) {
-        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard);
+            NodeGuard nodeGuard,
+            CostTracker costTracker) {
+        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard, costTracker);
     }
 }

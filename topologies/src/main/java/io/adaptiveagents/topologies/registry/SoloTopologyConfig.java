@@ -1,5 +1,6 @@
 package io.adaptiveagents.topologies.registry;
 
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.ResearchTools;
 import org.springframework.ai.chat.client.ChatClient;
@@ -19,7 +20,8 @@ public class SoloTopologyConfig {
     SoloGraphFactory soloGraphFactory(
             ObjectProvider<ChatClient.Builder> chatClientBuilder,
             ResearchTools researchTools,
-            NodeGuard nodeGuard) {
-        return new SoloGraphFactory(chatClientBuilder.getIfAvailable(), researchTools, nodeGuard);
+            NodeGuard nodeGuard,
+            CostTracker costTracker) {
+        return new SoloGraphFactory(chatClientBuilder.getIfAvailable(), researchTools, nodeGuard, costTracker);
     }
 }

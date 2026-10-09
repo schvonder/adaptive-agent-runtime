@@ -89,4 +89,8 @@ public class ControlledChatModel implements ChatModel {
     public static ChatResponse text(String text) {
         return ScriptedChatModel.text(text);
     }
+
+    public static ChatResponse textWithUsage(String text, String model, int promptTokens, int completionTokens) {
+        return ScriptedChatModel.textWithUsage(text, model, promptTokens, completionTokens);
+    }
 }

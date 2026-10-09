@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.chain.ChainState;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
@@ -33,7 +34,9 @@ import org.springframework.ai.chat.model.ChatResponse;
  * {@link ChainState#ERROR}/{@link ChainState#STAGE}/{@link ChainState#DEGRADED} and every downstream
  * node no-ops, so the graph never rethrows past a node. A {@link GuardException} at a node boundary
  * is folded separately with the {@link ChainState#GUARD_REJECTED} flag so the runner can map it to a
- * terminal status. An empty search result set is a graceful (non-degraded) path that skips the
+ * terminal status; the completed stage outputs are preserved as the
+ * {@link ChainState#PARTIAL_RESULT} snapshot with the stage the chain stopped at (CHAIN degradation:
+ * stop-at-stage). An empty search result set is a graceful (non-degraded) path that skips the
  * summarize model call.</p>
  */
 public final class ChainGraphFactory implements GraphFactory {
@@ -53,6 +56,7 @@ public final class ChainGraphFactory implements GraphFactory {
     private final SearchTool searchTool;
     private final CiteTool citeTool;
     private final NodeGuard nodeGuard;
+    private final CostTracker costTracker;
 
     /**
      * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
@@ -60,12 +64,14 @@ public final class ChainGraphFactory implements GraphFactory {
      * @param searchTool        workload search tool invoked directly by the search node
      * @param citeTool          workload citation tool invoked directly by the cite node
      * @param nodeGuard         per-node budget/deadline seam
+     * @param costTracker       per-response token/cost accounting
      */
-    public ChainGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, CiteTool citeTool, NodeGuard nodeGuard) {
+    public ChainGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, CiteTool citeTool, NodeGuard nodeGuard, CostTracker costTracker) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.citeTool = citeTool;
         this.nodeGuard = nodeGuard;
+        this.costTracker = costTracker;
     }
 
     @Override
@@ -94,10 +100,10 @@ public final class ChainGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(PLAN_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(PLAN_NODE, e);
+                return foldGuard(PLAN_NODE, e, state);
             }
             try {
-                String text = callText(chatClient, "Create a concise search plan for: " + state.prompt());
+                String text = callText(chatClient, "Create a concise search plan for: " + state.prompt(), taskId, PLAN_NODE);
                 if (text == null || text.isBlank()) {
                     return fold(PLAN_NODE, "empty plan response");
                 }
@@ -118,7 +124,7 @@ public final class ChainGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(SEARCH_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(SEARCH_NODE, e);
+                return foldGuard(SEARCH_NODE, e, state);
             }
             try {
                 List<SearchResult> merged = new ArrayList<>();
@@ -142,14 +148,14 @@ public final class ChainGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(SUMMARIZE_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(SUMMARIZE_NODE, e);
+                return foldGuard(SUMMARIZE_NODE, e, state);
             }
             List<SearchResult> results = state.searchResults();
             if (results.isEmpty()) {
                 return Map.of(ChainState.SUMMARY, EMPTY_SUMMARY);
             }
             try {
-                String text = callText(chatClient, summarizePrompt(results));
+                String text = callText(chatClient, summarizePrompt(results), taskId, SUMMARIZE_NODE);
                 if (text == null || text.isBlank()) {
                     return fold(SUMMARIZE_NODE, "empty summary response");
                 }
@@ -170,7 +176,7 @@ public final class ChainGraphFactory implements GraphFactory {
             try {
                 nodeGuard.check(CITE_NODE, taskId);
             } catch (GuardException e) {
-                return foldGuard(CITE_NODE, e);
+                return foldGuard(CITE_NODE, e, state);
             }
             try {
                 List<Citation> citations = citeTool.cite(state.searchResults(), null);
@@ -230,16 +236,32 @@ public final class ChainGraphFactory implements GraphFactory {
                 ChainState.STAGE, stage);
     }
 
-    private static Map<String, Object> foldGuard(String stage, GuardException e) {
+    private static Map<String, Object> foldGuard(String stage, GuardException e, ChainState state) {
         return Map.of(
                 ChainState.DEGRADED, true,
                 ChainState.ERROR, stage + " failed: " + e.getMessage(),
                 ChainState.STAGE, stage,
-                ChainState.GUARD_REJECTED, e.getClass().getSimpleName());
+                ChainState.GUARD_REJECTED, e.getClass().getSimpleName(),
+                ChainState.PARTIAL_RESULT, partialJson(stage, state));
     }
 
-    private static String callText(ChatClient chatClient, String userPrompt) {
+    private static String partialJson(String stoppedAt, ChainState state) {
+        ObjectNode root = MAPPER.createObjectNode();
+        root.put("stoppedAt", stoppedAt);
+        if (state.plan() != null) {
+            root.put("plan", state.plan());
+        }
+        if (state.summary() != null) {
+            root.put("summary", state.summary());
+        }
+        root.put("searchResults", state.searchResults().size());
+        root.put("degraded", true);
+        return root.toString();
+    }
+
+    private String callText(ChatClient chatClient, String userPrompt, UUID taskId, String nodeName) {
         ChatResponse response = chatClient.prompt().user(userPrompt).call().chatResponse();
+        costTracker.record(nodeName, taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
     }
 

@@ -1,5 +1,6 @@
 package io.adaptiveagents.topologies.registry;
 
+import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.CiteTool;
 import io.adaptiveagents.workload.tools.SearchTool;
@@ -21,7 +22,8 @@ public class ChainTopologyConfig {
             ObjectProvider<ChatClient.Builder> chatClientBuilder,
             SearchTool searchTool,
             CiteTool citeTool,
-            NodeGuard nodeGuard) {
-        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard);
+            NodeGuard nodeGuard,
+            CostTracker costTracker) {
+        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard, costTracker);
     }
 }

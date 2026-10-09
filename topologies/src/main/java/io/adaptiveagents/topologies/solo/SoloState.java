@@ -31,6 +31,9 @@ public final class SoloState extends AgentState {
     /** Set to the guard exception class name when a node boundary was refused (deadline/budget). */
     public static final String GUARD_REJECTED = "guardRejected";
 
+    /** JSON snapshot of salvageable outputs, folded when a guard rejects a node boundary. */
+    public static final String PARTIAL_RESULT = "partialResult";
+
     public SoloState(Map<String, Object> initData) {
         super(initData);
     }
@@ -53,6 +56,10 @@ public final class SoloState extends AgentState {
 
     public String error() {
         return stringValue(ERROR);
+    }
+
+    public String partialResult() {
+        return stringValue(PARTIAL_RESULT);
     }
 
     public boolean degraded() {
