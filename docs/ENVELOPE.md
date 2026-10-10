@@ -21,6 +21,13 @@ The system honors **only two** single sources of truth, both located within the 
 
 **CRITICAL: NO header override mechanism exists on any ingress.** A header cannot override `task_id` or `forced_topology`.
 
+## Ingress Auth Matrix
+| Ingress | Endpoint / Surface | Auth Requirement | Notes |
+|---------|-------------------|------------------|-------|
+| REST | `/tasks/**` | `X-API-Key` required | Fail-closed: missing/invalid key or blank server key returns 401 problem+json. |
+| MCP | `/mcp` | Auth-exempt | Streamable-HTTP on same servlet port; no API key required. |
+| Kafka | `adaptive-tasks-*` | Local-only (broker auth) | No application-level auth header; secured at cluster/broker level. |
+
 ## Protocol Mappings
 
 ### 1. REST Mapping
@@ -34,10 +41,46 @@ The system honors **only two** single sources of truth, both located within the 
 ### 2. MCP Mapping
 | Element | Mapping |
 |---------|---------|
+| Endpoint | POST/GET `/mcp` (streamable-http, same servlet port) |
 | Headers | None (MCP is Auth-Exempt) |
-| Body / Tool Args | Mapped identically into `TaskEnvelope` JSON (`task_id`, `prompt`, `breadth_hint`, `deadline_ms`, `budget_usd`, `forced_topology`) |
+| Transport / Protocol | Streamable HTTP (`spring.ai.mcp.server.protocol=STREAMABLE`) |
+| Body / Tool Args | Mapped into `TaskEnvelope` (`task_id`, `prompt`, `breadth_hint`, `deadline_ms`, `budget_usd`, `forced_topology`) |
 
 *Note: There are no identity or topology-carrying headers.*
+
+The MCP server mounts at `/mcp` on the same servlet port as REST/SSE and exposes three tools over `TaskIngressService` and `TaskStore`:
+
+1. `submit_task`
+   - **Arguments:**
+     - `task_id` (UUID, required): Client-supplied task id and idempotency key. Resubmitting an existing `task_id` returns current status without re-routing or re-executing.
+     - `prompt` (String, required): Non-blank research prompt.
+     - `breadth_hint` (Integer, optional, default: 1, range: 1..5): Breadth hint.
+     - `deadline_ms` (Long, optional, >0): Deadline duration in milliseconds.
+     - `budget_usd` (BigDecimal, optional, >0): Budget cap in USD.
+     - `forced_topology` (Topology enum, optional: `SOLO`, `CHAIN`, `FAN_OUT`, `SUPERVISOR`): Forced topology override.
+   - **Return Shape:**
+     `{"task_id": "<uuid>", "status": "<status>"}`
+   - **Behavior:** Validates envelope semantics via shared `EnvelopeValidator`. Dispatches asynchronously to execution engine. Immediate return with status at submission time.
+
+2. `get_task`
+   - **Arguments:**
+     - `task_id` (UUID, required): The task id.
+   - **Return Shape:**
+     `{"task_id": "<uuid>", "status": "<status>", "topology": "<topology or null>", "result": "<raw json string or null>", "error": "<raw json string or null>"}`
+   - **Behavior:** Fetches current task state. `result` and `error` are null while the task is in-flight.
+
+3. `get_task_result`
+   - **Arguments:**
+     - `task_id` (UUID, required): The task id.
+   - **Return Shape:**
+     `{"task_id": "<uuid>", "status": "SUCCEEDED", "result": "<raw json string>"}`
+   - **Behavior:** Fetches final result of a terminal `SUCCEEDED` task (including degraded partial results).
+
+#### MCP Error Semantics
+All client-side error conditions yield a **tool error result** (`isError=true` on `CallToolResult`), never an HTTP 500 or JSON-RPC protocol error:
+- **Validation failures:** Violations of `EnvelopeValidator` (blank `prompt`, `breadth_hint` outside 1..5, non-positive `deadline_ms` or `budget_usd`, or unparseable `forced_topology` enum) surface as `isError=true` tool results citing the violated rule.
+- **Unknown task ID:** In `get_task` or `get_task_result`, looking up an unrecorded `task_id` returns `isError=true` with `unknown task_id <uuid>`.
+- **Non-terminal or non-SUCCEEDED task:** Calling `get_task_result` for a task still in flight or ended as `FAILED`, `DEADLINE_EXCEEDED`, or `BUDGET_EXCEEDED` returns `isError=true` detailing current status and error reason.
 
 ### 3. Kafka Mapping
 | Element | Mapping |

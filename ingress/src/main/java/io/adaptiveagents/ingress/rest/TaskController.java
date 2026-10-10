@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.adaptiveagents.core.envelope.TaskEnvelope;
 import io.adaptiveagents.core.store.TaskRecord;
 import io.adaptiveagents.core.store.TaskStore;
+import io.adaptiveagents.ingress.common.EnvelopeValidator;
+import io.adaptiveagents.ingress.common.TaskValidationException;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -89,30 +91,12 @@ public class TaskController {
     }
 
     /**
-     * Manual envelope validation (Jackson covers structure; these are the semantic rules):
-     * v1 allows only {@code task_type=research}, {@code breadth_hint} 1..5 (Jackson's default 1
-     * makes absence valid), {@code deadline_ms}/{@code budget_usd} null-or-positive, and a
-     * non-blank {@code prompt}.
+     * Semantic validation delegates to the shared {@link EnvelopeValidator} — the single
+     * truth reused by the MCP tool adapter so envelope semantics cannot drift between
+     * protocols (T24 parity depends on this).
      */
     private static void validate(TaskEnvelope envelope) {
-        if (envelope.taskId() == null) {
-            throw new TaskValidationException("task_id is required");
-        }
-        if (!"research".equals(envelope.taskType())) {
-            throw new TaskValidationException("task_type must be 'research' (only v1 type supported)");
-        }
-        if (envelope.prompt() == null || envelope.prompt().isBlank()) {
-            throw new TaskValidationException("prompt must not be blank");
-        }
-        if (envelope.breadthHint() < 1 || envelope.breadthHint() > 5) {
-            throw new TaskValidationException("breadth_hint must be between 1 and 5");
-        }
-        if (envelope.deadlineMs() != null && envelope.deadlineMs() <= 0) {
-            throw new TaskValidationException("deadline_ms must be greater than 0");
-        }
-        if (envelope.budgetUsd() != null && envelope.budgetUsd().signum() <= 0) {
-            throw new TaskValidationException("budget_usd must be greater than 0");
-        }
+        EnvelopeValidator.validate(envelope);
     }
 
     /** Absent/blank header replays the full history; a non-numeric value is a client error. */

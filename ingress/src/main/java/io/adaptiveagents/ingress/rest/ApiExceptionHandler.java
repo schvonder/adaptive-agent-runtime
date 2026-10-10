@@ -1,5 +1,6 @@
 package io.adaptiveagents.ingress.rest;
 
+import io.adaptiveagents.ingress.common.TaskValidationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;

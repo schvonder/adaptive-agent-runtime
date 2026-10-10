@@ -1,0 +1,12 @@
+# Single-deployable runtime config. Deployment-specific values (datasource, API key,
+# Kafka flag) arrive via environment/args (SpawnedApp tests, docker-compose in todo 29);
+# this file carries only the static MCP ingress switch. The MCP server mounts on the same
+# servlet port as REST/SSE at /mcp — auth-exempt per the docs/ENVELOPE.md auth matrix
+# (ApiKeyAuthFilter guards /tasks only).
+spring:
+  ai:
+    mcp:
+      server:
+        name: adaptive-agent-runtime
+        version: 0.1.0
+        protocol: STREAMABLE
