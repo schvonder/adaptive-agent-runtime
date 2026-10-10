@@ -39,3 +39,49 @@ kafka-console-consumer.sh \
 Historical replay of events emitted before your consumer attached is NOT served by the
 topic — use the REST SSE stream `GET /tasks/{id}/events` with `Last-Event-ID` (see
 docs/ENVELOPE.md).
+
+---
+
+# Benchmark Harness (T26 / T27)
+
+The `bench` module provides an automated harness (`BenchmarkRunner`) that executes the 12 demo research tasks (`workload/src/main/resources/tasks/demo-tasks.json`) across all four topologies (`SOLO`, `CHAIN`, `FAN_OUT`, `SUPERVISOR`) across $N \ge 3$ runs, reporting medians for latency, cost, and quality.
+
+## Execution
+
+### Test Mode (Stub / CI)
+Executes the full $4 \times 12 \times 3$ matrix using in-process deterministic doubles and Testcontainers PostgreSQL:
+
+```bash
+mvn -pl bench test -Pbenchmark
+```
+
+Generates `target/BENCHMARK.md` capturing benchmark configuration, per-cell medians, and status.
+
+### Real Model Run (T27)
+Configured via `bench/src/main/resources/bench-profile.yml`:
+
+- **Profiles**:
+  - `vertex-proxy` (default for T27):
+    - Provider: OpenAI-compatible proxy
+    - Base URL: `http://localhost:4000`
+    - Model: `gemini-3.8-flash-vertex`
+    - API Key: Loaded from environment variable `RUNTIME_BENCH_API_KEY` (no literal secret committed)
+    - Pricing: $0.15 / 1M prompt tokens, $0.60 / 1M completion tokens
+  - `local-llama` (alternative local profile):
+    - Base URL: `http://192.168.1.54:8080`
+    - Model: `llama-3.2-3b-instruct`
+    - API Key: Loaded from environment variable `LOCAL_LLAMA_API_KEY`
+- **Database Configuration**:
+  - Self-contained via Testcontainers PostgreSQL in test runs.
+  - For external deployments, configure via environment variables:
+    - `SPRING_DATASOURCE_URL`
+    - `SPRING_DATASOURCE_USERNAME`
+    - `SPRING_DATASOURCE_PASSWORD`
+- **Metrics Collected**:
+  - **P50 Latency**: Wall-clock duration from task submission to terminal status (`SUCCEEDED`, etc.).
+  - **Median Cost**: Computed from token usage recorded in `task_cost_entries` (or prompt/completion length) multiplied by the profile price table.
+  - **Quality (0-5)**: Scored by `LlmJudge` using the 0-5 rubric with reference grounding.
+- **Fixture Requirement & Error Rows**:
+  - Workload runs in offline fixture mode (`WORKLOAD_LIVE` unset).
+  - Tasks require recorded fixtures under `fixtures/tasks/<task_id>/`.
+  - If a fixture is missing, the harness generates an `ERROR (missing fixture: ...)` row in the benchmark table, ensuring the matrix never shrinks.

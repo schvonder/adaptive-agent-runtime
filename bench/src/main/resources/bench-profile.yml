@@ -1,0 +1,35 @@
+# Benchmark Profile Configuration (T26 / T27)
+active-profile: vertex-proxy
+
+profiles:
+  vertex-proxy:
+    provider: openai-compatible
+    base-url: http://localhost:4000
+    model: gemini-3.8-flash-vertex
+    api-key-env: RUNTIME_BENCH_API_KEY
+    temperature: 0.0
+    seed: 42
+    runs: 3
+    pricing:
+      input-per-1m: 0.15
+      output-per-1m: 0.60
+
+  local-llama:
+    provider: openai-compatible
+    base-url: http://192.168.1.54:8080
+    model: llama-3.2-3b-instruct
+    api-key-env: LOCAL_LLAMA_API_KEY
+    temperature: 0.0
+    seed: 42
+    runs: 3
+    pricing:
+      input-per-1m: 0.00
+      output-per-1m: 0.00
+
+judge:
+  model: gemini-3.8-flash-vertex
+  temperature: 0.0
+  seed: 42
+  rubric:
+    scale: 0-5
+    description: "Evaluates completeness, factual correctness against reference sources, and reasoning structure."
