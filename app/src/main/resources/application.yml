@@ -4,9 +4,21 @@
 # servlet port as REST/SSE at /mcp — auth-exempt per the docs/ENVELOPE.md auth matrix
 # (ApiKeyAuthFilter guards /tasks only).
 spring:
+  application:
+    name: adaptive-agent-runtime
   ai:
     mcp:
       server:
         name: adaptive-agent-runtime
         version: 0.1.0
         protocol: STREAMABLE
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}

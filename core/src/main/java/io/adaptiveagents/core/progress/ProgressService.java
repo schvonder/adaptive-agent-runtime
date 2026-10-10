@@ -2,6 +2,10 @@ package io.adaptiveagents.core.progress;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -13,17 +17,41 @@ import java.util.UUID;
 public class ProgressService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper mapper;
+    private final ObjectProvider<Tracer> tracerProvider;
 
-    public ProgressService(JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
+    @Autowired
+    public ProgressService(JdbcTemplate jdbcTemplate, ObjectMapper mapper, ObjectProvider<Tracer> tracerProvider) {
         this.jdbcTemplate = jdbcTemplate;
         this.mapper = mapper;
+        this.tracerProvider = tracerProvider;
+    }
+
+    public ProgressService(JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
+        this(jdbcTemplate, mapper, null);
     }
 
     public long publish(UUID taskId, String type, ObjectNode payload) {
+        ObjectNode enrichedPayload = payload;
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer != null) {
+            Span currentSpan = tracer.currentSpan();
+            if (currentSpan != null && currentSpan.context() != null) {
+                String traceId = currentSpan.context().traceId();
+                if (traceId != null && !traceId.isBlank()) {
+                    if (enrichedPayload == null) {
+                        enrichedPayload = mapper.createObjectNode();
+                    }
+                    if (!enrichedPayload.has("traceId")) {
+                        enrichedPayload.put("traceId", traceId);
+                    }
+                }
+            }
+        }
+
         String payloadJson = null;
-        if (payload != null) {
+        if (enrichedPayload != null) {
             try {
-                payloadJson = mapper.writeValueAsString(payload);
+                payloadJson = mapper.writeValueAsString(enrichedPayload);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to serialize payload", e);
             }

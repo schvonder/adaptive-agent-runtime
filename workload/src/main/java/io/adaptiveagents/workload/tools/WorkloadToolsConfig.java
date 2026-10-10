@@ -1,5 +1,7 @@
 package io.adaptiveagents.workload.tools;
 
+import io.micrometer.tracing.Tracer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,18 +22,18 @@ public class WorkloadToolsConfig {
 
     @Bean
     @ConditionalOnExpression(LIVE_SEARCH_CONDITION)
-    public TavilyAdapter tavilyAdapter() {
-        return new TavilyAdapter(System.getenv("TAVILY_API_KEY"));
+    public TavilyAdapter tavilyAdapter(ObjectProvider<Tracer> tracerProvider) {
+        return new TavilyAdapter(System.getenv("TAVILY_API_KEY"), tracerProvider);
     }
 
     @Bean
     @ConditionalOnExpression("!(" + LIVE_SEARCH_CONDITION + ")")
-    public FixtureSearchAdapter fixtureSearchAdapter() {
-        return new FixtureSearchAdapter();
+    public FixtureSearchAdapter fixtureSearchAdapter(ObjectProvider<Tracer> tracerProvider) {
+        return new FixtureSearchAdapter(tracerProvider);
     }
 
     @Bean
-    public FetchTool fetchTool() {
-        return new FixtureFetchAdapter();
+    public FetchTool fetchTool(ObjectProvider<Tracer> tracerProvider) {
+        return new FixtureFetchAdapter(tracerProvider);
     }
 }

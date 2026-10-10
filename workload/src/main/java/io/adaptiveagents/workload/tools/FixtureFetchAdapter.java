@@ -1,6 +1,9 @@
 package io.adaptiveagents.workload.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.tracing.Baggage;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -8,6 +11,7 @@ import java.util.HashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.ClassPathResource;
 
 /**
@@ -28,19 +32,57 @@ public class FixtureFetchAdapter implements FetchTool {
     private final ObjectMapper objectMapper;
     private final String basePath;
     private final Map<String, String> pages;
+    private final ObjectProvider<Tracer> tracerProvider;
 
     public FixtureFetchAdapter() {
-        this(DEFAULT_BASE);
+        this(DEFAULT_BASE, null);
+    }
+
+    public FixtureFetchAdapter(ObjectProvider<Tracer> tracerProvider) {
+        this(DEFAULT_BASE, tracerProvider);
     }
 
     public FixtureFetchAdapter(String basePath) {
+        this(basePath, null);
+    }
+
+    public FixtureFetchAdapter(String basePath, ObjectProvider<Tracer> tracerProvider) {
         this.basePath = basePath.endsWith("/") ? basePath : basePath + "/";
         this.objectMapper = new ObjectMapper();
+        this.tracerProvider = tracerProvider;
         this.pages = loadPages();
     }
 
+    private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     @Override
     public String fetch(String url) {
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer == null || IN_TOOL_CALL.get()) {
+            return doFetch(url);
+        }
+        IN_TOOL_CALL.set(true);
+        Span span = tracer.nextSpan().name("fetch_page");
+        Baggage baggage = tracer.getBaggage("task_id");
+        if (baggage != null && baggage.get() != null) {
+            span.tag("task_id", baggage.get());
+        }
+        span.start();
+        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
+            return doFetch(url);
+        } catch (Throwable t) {
+            span.error(t);
+            throw t;
+        } finally {
+            try {
+                span.end();
+            } finally {
+                IN_TOOL_CALL.set(false);
+            }
+        }
+    }
+
+    private String doFetch(String url) {
         if (url == null || url.isBlank()) {
             return "";
         }

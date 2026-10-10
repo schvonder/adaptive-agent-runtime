@@ -22,6 +22,10 @@
             <artifactId>workload</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing</artifactId>
+        </dependency>
         <!-- Spring AI: ChatClient + tool calling (version managed by spring-ai-bom) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

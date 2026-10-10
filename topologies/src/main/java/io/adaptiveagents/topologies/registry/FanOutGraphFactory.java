@@ -11,6 +11,8 @@ import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.SearchResult;
 import io.adaptiveagents.workload.tools.SearchTool;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * FAN_OUT/GATHER topology: {@value #FAN_WIDTH} fixed parallel branch nodes merged by a gather node.
@@ -71,19 +74,24 @@ public final class FanOutGraphFactory implements GraphFactory {
     private final SearchTool searchTool;
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
+    private final ObjectProvider<Tracer> tracerProvider;
+    private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
-    /**
-     * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
-     * @param searchTool        workload search tool invoked directly by each branch
-     * @param nodeGuard         per-node budget/deadline seam
-     * @param costTracker       per-response token/cost accounting
-     */
-    public FanOutGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
+    public FanOutGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
+        this.tracerProvider = tracerProvider;
+    }
+
+    public FanOutGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
+        this(chatClientBuilder, searchTool, nodeGuard, costTracker, null);
     }
 
     @Override
@@ -119,8 +127,18 @@ public final class FanOutGraphFactory implements GraphFactory {
      * so the parallel node's {@code allOfFailFast} sees genuinely concurrent branches.
      */
     private AsyncNodeActionWithConfig<FanOutState> branchNode(int branch, ChatClient chatClient) {
-        return (state, config) ->
-                CompletableFuture.supplyAsync(() -> runBranch(branch, state, config, chatClient), VIRTUAL);
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        return (state, config) -> {
+            Span currentSpan = tracer != null ? tracer.currentSpan() : null;
+            return CompletableFuture.supplyAsync(() -> {
+                if (tracer != null && currentSpan != null) {
+                    try (Tracer.SpanInScope ws = tracer.withSpan(currentSpan)) {
+                        return runBranch(branch, state, config, chatClient);
+                    }
+                }
+                return runBranch(branch, state, config, chatClient);
+            }, VIRTUAL);
+        };
     }
 
     private Map<String, Object> runBranch(int branch, FanOutState state, RunnableConfig config, ChatClient chatClient) {
@@ -131,7 +149,8 @@ public final class FanOutGraphFactory implements GraphFactory {
             return failureGuard(branch, e);
         }
         try {
-            List<SearchResult> results = searchTool.search(state.prompt() + " aspect " + branch);
+            List<SearchResult> results = traceToolCall("web_search", taskId,
+                    () -> searchTool.search(state.prompt() + " aspect " + branch));
             String section = results.isEmpty()
                     ? "No sources found for aspect " + branch
                     : summarize(chatClient, branch, results, taskId);
@@ -142,6 +161,31 @@ public final class FanOutGraphFactory implements GraphFactory {
         } catch (Exception e) {
             log.warn("branch {} failed for task {}: {}", branch, taskId, e.getMessage());
             return failure(branch, e.getMessage());
+        }
+    }
+
+    private <T> T traceToolCall(String toolName, UUID taskId, java.util.function.Supplier<T> action) {
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer == null || IN_TOOL_CALL.get()) {
+            return action.get();
+        }
+        IN_TOOL_CALL.set(true);
+        Span span = tracer.nextSpan().name(toolName);
+        if (taskId != null) {
+            span.tag("task_id", taskId.toString());
+        }
+        span.start();
+        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
+            return action.get();
+        } catch (Throwable t) {
+            span.error(t);
+            throw t;
+        } finally {
+            try {
+                span.end();
+            } finally {
+                IN_TOOL_CALL.set(false);
+            }
         }
     }
 

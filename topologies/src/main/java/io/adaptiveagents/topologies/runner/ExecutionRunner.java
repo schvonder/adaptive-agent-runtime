@@ -7,9 +7,14 @@ import io.adaptiveagents.core.progress.ProgressService;
 import io.adaptiveagents.core.store.IllegalTaskStateException;
 import io.adaptiveagents.core.store.TaskRecord;
 import io.adaptiveagents.core.store.TaskStore;
+import io.adaptiveagents.core.trace.TaskTraceContext;
 import io.adaptiveagents.topologies.guard.BudgetExceededException;
 import io.adaptiveagents.topologies.guard.DeadlineExceededException;
 import io.adaptiveagents.topologies.registry.TopologyRegistry;
+import io.micrometer.tracing.BaggageInScope;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -29,10 +34,13 @@ import org.bsc.langgraph4j.CompileConfig;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.langgraph4j.StateGraph;
+import org.bsc.langgraph4j.action.AsyncNodeActionWithConfig;
 import org.bsc.langgraph4j.checkpoint.PostgresSaver;
 import org.bsc.langgraph4j.state.AgentState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -102,17 +110,38 @@ public final class ExecutionRunner {
      * removes the entry). This registry is the sweep's cancel surface.
      */
     private final ConcurrentHashMap<UUID, Future<Map<String, Object>>> inFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Span> activeTaskSpans = new ConcurrentHashMap<>();
 
     private final TopologyRegistry topologyRegistry;
     private final TaskStore taskStore;
     private final ProgressService progressService;
     private final DataSource dataSource;
+    private final ObjectProvider<Tracer> tracerProvider;
 
-    public ExecutionRunner(TopologyRegistry topologyRegistry, TaskStore taskStore, ProgressService progressService, DataSource dataSource) {
+    @Autowired
+    public ExecutionRunner(
+            TopologyRegistry topologyRegistry,
+            TaskStore taskStore,
+            ProgressService progressService,
+            DataSource dataSource,
+            ObjectProvider<Tracer> tracerProvider) {
         this.topologyRegistry = topologyRegistry;
         this.taskStore = taskStore;
         this.progressService = progressService;
         this.dataSource = dataSource;
+        this.tracerProvider = tracerProvider;
+    }
+
+    public ExecutionRunner(
+            TopologyRegistry topologyRegistry,
+            TaskStore taskStore,
+            ProgressService progressService,
+            DataSource dataSource) {
+        this(topologyRegistry, taskStore, progressService, dataSource, null);
+    }
+
+    private Tracer getTracer() {
+        return tracerProvider != null ? tracerProvider.getIfAvailable() : null;
     }
 
     /**
@@ -129,6 +158,30 @@ public final class ExecutionRunner {
      * @throws IllegalTaskStateException when the task is missing or not ROUTED
      */
     public Outcome execute(UUID taskId) {
+        Tracer tracer = getTracer();
+        if (tracer != null && tracer.currentSpan() == null) {
+            Span taskSpan = tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString()).start();
+            activeTaskSpans.put(taskId, taskSpan);
+            BaggageInScope baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            TaskTraceContext.setTaskId(taskId);
+            try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                return executeInternal(taskId);
+            } catch (Throwable t) {
+                taskSpan.error(t);
+                throw t;
+            } finally {
+                activeTaskSpans.remove(taskId);
+                if (baggage != null) {
+                    baggage.close();
+                }
+                taskSpan.end();
+                TaskTraceContext.clear();
+            }
+        }
+        return executeInternal(taskId);
+    }
+
+    private Outcome executeInternal(UUID taskId) {
         TaskRecord task = requireStatus(taskId, TaskStatus.ROUTED);
         taskStore.transition(taskId, TaskStatus.RUNNING);
         return runAndMap(taskId, task, initialState(task));
@@ -136,7 +189,42 @@ public final class ExecutionRunner {
 
     /** Async wrapper over {@link #execute(UUID)} on the unpooled virtual-thread executor. */
     public CompletableFuture<Outcome> executeAsync(UUID taskId) {
-        return CompletableFuture.supplyAsync(() -> execute(taskId), VIRTUAL);
+        Tracer tracer = getTracer();
+        Span parentSpan = tracer != null ? tracer.currentSpan() : null;
+        return CompletableFuture.supplyAsync(() -> {
+            Span taskSpan = null;
+            BaggageInScope baggage = null;
+            if (tracer != null) {
+                taskSpan = (parentSpan != null)
+                        ? tracer.nextSpan(parentSpan).name("task-execution").tag("task_id", taskId.toString())
+                        : tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString());
+                taskSpan.start();
+                activeTaskSpans.put(taskId, taskSpan);
+                baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            }
+            TaskTraceContext.setTaskId(taskId);
+            if (taskSpan != null) {
+                try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                    return executeInternal(taskId);
+                } catch (Throwable t) {
+                    taskSpan.error(t);
+                    throw t;
+                } finally {
+                    activeTaskSpans.remove(taskId);
+                    if (baggage != null) {
+                        baggage.close();
+                    }
+                    taskSpan.end();
+                    TaskTraceContext.clear();
+                }
+            } else {
+                try {
+                    return executeInternal(taskId);
+                } finally {
+                    TaskTraceContext.clear();
+                }
+            }
+        }, VIRTUAL);
     }
 
     /**
@@ -148,13 +236,72 @@ public final class ExecutionRunner {
      * @throws IllegalTaskStateException when the task is missing or not RUNNING
      */
     public Outcome resume(UUID taskId) {
+        Tracer tracer = getTracer();
+        if (tracer != null && tracer.currentSpan() == null) {
+            Span taskSpan = tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString()).start();
+            activeTaskSpans.put(taskId, taskSpan);
+            BaggageInScope baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            TaskTraceContext.setTaskId(taskId);
+            try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                return resumeInternal(taskId);
+            } catch (Throwable t) {
+                taskSpan.error(t);
+                throw t;
+            } finally {
+                activeTaskSpans.remove(taskId);
+                if (baggage != null) {
+                    baggage.close();
+                }
+                taskSpan.end();
+                TaskTraceContext.clear();
+            }
+        }
+        return resumeInternal(taskId);
+    }
+
+    private Outcome resumeInternal(UUID taskId) {
         TaskRecord task = requireStatus(taskId, TaskStatus.RUNNING);
         return runAndMap(taskId, task, null);
     }
 
     /** Async wrapper over {@link #resume(UUID)} on the unpooled virtual-thread executor. */
     public CompletableFuture<Outcome> resumeAsync(UUID taskId) {
-        return CompletableFuture.supplyAsync(() -> resume(taskId), VIRTUAL);
+        Tracer tracer = getTracer();
+        Span parentSpan = tracer != null ? tracer.currentSpan() : null;
+        return CompletableFuture.supplyAsync(() -> {
+            Span taskSpan = null;
+            BaggageInScope baggage = null;
+            if (tracer != null) {
+                taskSpan = (parentSpan != null)
+                        ? tracer.nextSpan(parentSpan).name("task-execution").tag("task_id", taskId.toString())
+                        : tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString());
+                taskSpan.start();
+                activeTaskSpans.put(taskId, taskSpan);
+                baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            }
+            TaskTraceContext.setTaskId(taskId);
+            if (taskSpan != null) {
+                try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                    return resumeInternal(taskId);
+                } catch (Throwable t) {
+                    taskSpan.error(t);
+                    throw t;
+                } finally {
+                    activeTaskSpans.remove(taskId);
+                    if (baggage != null) {
+                        baggage.close();
+                    }
+                    taskSpan.end();
+                    TaskTraceContext.clear();
+                }
+            } else {
+                try {
+                    return resumeInternal(taskId);
+                } finally {
+                    TaskTraceContext.clear();
+                }
+            }
+        }, VIRTUAL);
     }
 
     /**
@@ -166,6 +313,30 @@ public final class ExecutionRunner {
      * @throws IllegalTaskStateException when the task is missing or not RUNNING
      */
     public Outcome restart(UUID taskId) {
+        Tracer tracer = getTracer();
+        if (tracer != null && tracer.currentSpan() == null) {
+            Span taskSpan = tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString()).start();
+            activeTaskSpans.put(taskId, taskSpan);
+            BaggageInScope baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            TaskTraceContext.setTaskId(taskId);
+            try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                return restartInternal(taskId);
+            } catch (Throwable t) {
+                taskSpan.error(t);
+                throw t;
+            } finally {
+                activeTaskSpans.remove(taskId);
+                if (baggage != null) {
+                    baggage.close();
+                }
+                taskSpan.end();
+                TaskTraceContext.clear();
+            }
+        }
+        return restartInternal(taskId);
+    }
+
+    private Outcome restartInternal(UUID taskId) {
         TaskRecord task = requireStatus(taskId, TaskStatus.RUNNING);
         return runAndMap(taskId, task, initialState(task));
     }
@@ -174,7 +345,42 @@ public final class ExecutionRunner {
      * Async wrapper over {@link #restart(UUID)} on the unpooled virtual-thread executor.
      */
     public CompletableFuture<Outcome> restartAsync(UUID taskId) {
-        return CompletableFuture.supplyAsync(() -> restart(taskId), VIRTUAL);
+        Tracer tracer = getTracer();
+        Span parentSpan = tracer != null ? tracer.currentSpan() : null;
+        return CompletableFuture.supplyAsync(() -> {
+            Span taskSpan = null;
+            BaggageInScope baggage = null;
+            if (tracer != null) {
+                taskSpan = (parentSpan != null)
+                        ? tracer.nextSpan(parentSpan).name("task-execution").tag("task_id", taskId.toString())
+                        : tracer.nextSpan().name("task-execution").tag("task_id", taskId.toString());
+                taskSpan.start();
+                activeTaskSpans.put(taskId, taskSpan);
+                baggage = tracer.createBaggageInScope("task_id", taskId.toString());
+            }
+            TaskTraceContext.setTaskId(taskId);
+            if (taskSpan != null) {
+                try (Tracer.SpanInScope ws = tracer.withSpan(taskSpan)) {
+                    return restartInternal(taskId);
+                } catch (Throwable t) {
+                    taskSpan.error(t);
+                    throw t;
+                } finally {
+                    activeTaskSpans.remove(taskId);
+                    if (baggage != null) {
+                        baggage.close();
+                    }
+                    taskSpan.end();
+                    TaskTraceContext.clear();
+                }
+            } else {
+                try {
+                    return restartInternal(taskId);
+                } finally {
+                    TaskTraceContext.clear();
+                }
+            }
+        }, VIRTUAL);
     }
 
     /**
@@ -247,7 +453,16 @@ public final class ExecutionRunner {
         // Registered BEFORE the run is handed to the executor: a cancel arriving at any instant
         // after registration finds the entry (a submit()-then-put() shape would leave a window
         // in which the sweep misses the run and finalizes underneath it).
-        FutureTask<Map<String, Object>> run = new FutureTask<>(() -> invokeGraph(task, input));
+        Tracer tracer = getTracer();
+        Span currentSpan = tracer != null ? tracer.currentSpan() : null;
+        FutureTask<Map<String, Object>> run = new FutureTask<>(() -> {
+            if (tracer != null && currentSpan != null) {
+                try (Tracer.SpanInScope ws = tracer.withSpan(currentSpan)) {
+                    return invokeGraph(task, input);
+                }
+            }
+            return invokeGraph(task, input);
+        });
         inFlight.put(taskId, run);
         try {
             VIRTUAL.execute(run);
@@ -307,12 +522,55 @@ public final class ExecutionRunner {
 
     private Map<String, Object> invokeGraph(TaskRecord task, Map<String, Object> input) {
         StateGraph<? extends AgentState> graph = topologyRegistry.graphFor(task.topology());
+        attachNodeTracing(graph, task);
         CompiledGraph<? extends AgentState> compiled = compile(graph);
         RunnableConfig config = RunnableConfig.builder().threadId(task.taskId().toString()).build();
         return compiled.invoke(input, config)
                 .map(AgentState::data)
                 .orElseThrow(() -> new IllegalStateException(
                         "Graph produced no final state for task " + task.taskId()));
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void attachNodeTracing(StateGraph<? extends AgentState> graph, TaskRecord task) {
+        Tracer tracer = getTracer();
+        if (tracer == null) {
+            return;
+        }
+        ((StateGraph) graph).addWrapCallNodeHook((nodeId, state, config, next) -> {
+            Span parent = activeTaskSpans.get(task.taskId());
+            Span nodeSpan;
+            if (parent != null) {
+                nodeSpan = tracer.nextSpan(parent);
+            } else {
+                Span cur = tracer.currentSpan();
+                nodeSpan = cur != null ? tracer.nextSpan(cur) : tracer.nextSpan();
+            }
+            nodeSpan.name((String) nodeId)
+                    .tag("task_id", task.taskId().toString())
+                    .tag("node", (String) nodeId)
+                    .tag("topology", task.topology().name())
+                    .start();
+            TaskTraceContext.setTaskId(task.taskId());
+            try (Tracer.SpanInScope ws = tracer.withSpan(nodeSpan)) {
+                CompletableFuture<Map<String, Object>> future = ((AsyncNodeActionWithConfig) next).apply((AgentState) state, (RunnableConfig) config);
+                return future.whenComplete((res, err) -> {
+                    try {
+                        if (err != null) {
+                            nodeSpan.error(err);
+                        }
+                    } finally {
+                        nodeSpan.end();
+                    }
+                });
+            } catch (Throwable t) {
+                nodeSpan.error(t);
+                nodeSpan.end();
+                throw t;
+            } finally {
+                TaskTraceContext.clear();
+            }
+        });
     }
 
     /** A {@code null} input means "resume from the last checkpoint" in the langgraph4j invoke. */

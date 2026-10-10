@@ -4,6 +4,7 @@ import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.CiteTool;
 import io.adaptiveagents.workload.tools.SearchTool;
+import io.micrometer.tracing.Tracer;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
@@ -23,7 +24,8 @@ public class ChainTopologyConfig {
             SearchTool searchTool,
             CiteTool citeTool,
             NodeGuard nodeGuard,
-            CostTracker costTracker) {
-        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard, costTracker);
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
+        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard, costTracker, tracerProvider);
     }
 }

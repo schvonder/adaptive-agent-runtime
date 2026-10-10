@@ -3,6 +3,7 @@ package io.adaptiveagents.topologies.registry;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.SearchTool;
+import io.micrometer.tracing.Tracer;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
@@ -21,7 +22,8 @@ public class FanOutTopologyConfig {
             ObjectProvider<ChatClient.Builder> chatClientBuilder,
             SearchTool searchTool,
             NodeGuard nodeGuard,
-            CostTracker costTracker) {
-        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard, costTracker);
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
+        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard, costTracker, tracerProvider);
     }
 }

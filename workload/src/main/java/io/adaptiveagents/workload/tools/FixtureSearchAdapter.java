@@ -2,6 +2,9 @@ package io.adaptiveagents.workload.tools;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.tracing.Baggage;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -10,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.ClassPathResource;
 
 /**
@@ -31,14 +35,24 @@ public class FixtureSearchAdapter implements SearchTool {
     private final ObjectMapper objectMapper;
     private final String basePath;
     private final Map<String, List<SearchResult>> fixtures;
+    private final ObjectProvider<Tracer> tracerProvider;
 
     public FixtureSearchAdapter() {
-        this(DEFAULT_BASE);
+        this(DEFAULT_BASE, null);
+    }
+
+    public FixtureSearchAdapter(ObjectProvider<Tracer> tracerProvider) {
+        this(DEFAULT_BASE, tracerProvider);
     }
 
     public FixtureSearchAdapter(String basePath) {
+        this(basePath, null);
+    }
+
+    public FixtureSearchAdapter(String basePath, ObjectProvider<Tracer> tracerProvider) {
         this.basePath = basePath.endsWith("/") ? basePath : basePath + "/";
         this.objectMapper = new ObjectMapper();
+        this.tracerProvider = tracerProvider;
         // Resolve through this class's own classloader: in a Spring Boot fat jar the ambient
         // (context/system) classloader of a worker thread cannot see BOOT-INF/classes, which would
         // silently disable every packaged fixture.
@@ -46,8 +60,36 @@ public class FixtureSearchAdapter implements SearchTool {
         this.fixtures = loadFixtures(classLoader);
     }
 
+    private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     @Override
     public List<SearchResult> search(String query) {
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer == null || IN_TOOL_CALL.get()) {
+            return doSearch(query);
+        }
+        IN_TOOL_CALL.set(true);
+        Span span = tracer.nextSpan().name("web_search");
+        Baggage baggage = tracer.getBaggage("task_id");
+        if (baggage != null && baggage.get() != null) {
+            span.tag("task_id", baggage.get());
+        }
+        span.start();
+        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
+            return doSearch(query);
+        } catch (Throwable t) {
+            span.error(t);
+            throw t;
+        } finally {
+            try {
+                span.end();
+            } finally {
+                IN_TOOL_CALL.set(false);
+            }
+        }
+    }
+
+    private List<SearchResult> doSearch(String query) {
         if (query == null || query.isBlank()) {
             return List.of();
         }

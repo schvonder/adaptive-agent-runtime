@@ -11,6 +11,8 @@ import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.topologies.supervisor.SupervisorState;
 import io.adaptiveagents.workload.tools.SearchResult;
 import io.adaptiveagents.workload.tools.SearchTool;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * SUPERVISOR_TEAM topology: a pure-routing supervisor that drives three subagent nodes
@@ -79,19 +82,24 @@ public final class SupervisorGraphFactory implements GraphFactory {
     private final SearchTool searchTool;
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
+    private final ObjectProvider<Tracer> tracerProvider;
+    private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
-    /**
-     * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
-     * @param searchTool        workload search tool invoked directly by the researcher node
-     * @param nodeGuard         per-node budget/deadline seam
-     * @param costTracker       per-response token/cost accounting
-     */
-    public SupervisorGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
+    public SupervisorGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
+        this.tracerProvider = tracerProvider;
+    }
+
+    public SupervisorGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
+        this(chatClientBuilder, searchTool, nodeGuard, costTracker, null);
     }
 
     @Override
@@ -162,7 +170,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 return foldGuard(RESEARCHER_NODE, e, state);
             }
             try {
-                List<SearchResult> results = searchTool.search(state.prompt());
+                List<SearchResult> results = traceToolCall("web_search", taskId, () -> searchTool.search(state.prompt()));
                 String research = results.isEmpty() ? "No sources found." : distill(chatClient, state.prompt(), results, taskId);
                 if (research == null || research.isBlank()) {
                     return fold("researcher: empty research response");
@@ -173,6 +181,31 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 return fold("researcher: " + e.getMessage());
             }
         };
+    }
+
+    private <T> T traceToolCall(String toolName, UUID taskId, java.util.function.Supplier<T> action) {
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer == null || IN_TOOL_CALL.get()) {
+            return action.get();
+        }
+        IN_TOOL_CALL.set(true);
+        Span span = tracer.nextSpan().name(toolName);
+        if (taskId != null) {
+            span.tag("task_id", taskId.toString());
+        }
+        span.start();
+        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
+            return action.get();
+        } catch (Throwable t) {
+            span.error(t);
+            throw t;
+        } finally {
+            try {
+                span.end();
+            } finally {
+                IN_TOOL_CALL.set(false);
+            }
+        }
     }
 
     private NodeActionWithConfig<SupervisorState> writerNode(ChatClient chatClient) {

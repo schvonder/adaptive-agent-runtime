@@ -13,6 +13,8 @@ import io.adaptiveagents.workload.tools.Citation;
 import io.adaptiveagents.workload.tools.CiteTool;
 import io.adaptiveagents.workload.tools.SearchResult;
 import io.adaptiveagents.workload.tools.SearchTool;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * CHAIN topology: four sequential nodes plan &rarr; search &rarr; summarize &rarr; cite.
@@ -57,21 +60,26 @@ public final class ChainGraphFactory implements GraphFactory {
     private final CiteTool citeTool;
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
+    private final ObjectProvider<Tracer> tracerProvider;
+    private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
-    /**
-     * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
-     *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
-     * @param searchTool        workload search tool invoked directly by the search node
-     * @param citeTool          workload citation tool invoked directly by the cite node
-     * @param nodeGuard         per-node budget/deadline seam
-     * @param costTracker       per-response token/cost accounting
-     */
-    public ChainGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, CiteTool citeTool, NodeGuard nodeGuard, CostTracker costTracker) {
+    public ChainGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            CiteTool citeTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.citeTool = citeTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
+        this.tracerProvider = tracerProvider;
+    }
+
+    public ChainGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, CiteTool citeTool, NodeGuard nodeGuard, CostTracker costTracker) {
+        this(chatClientBuilder, searchTool, citeTool, nodeGuard, costTracker, null);
     }
 
     @Override
@@ -129,7 +137,7 @@ public final class ChainGraphFactory implements GraphFactory {
             try {
                 List<SearchResult> merged = new ArrayList<>();
                 for (String query : deriveQueries(state.plan())) {
-                    merged.addAll(searchTool.search(query));
+                    merged.addAll(traceToolCall("web_search", taskId, () -> searchTool.search(query)));
                 }
                 return Map.of(ChainState.SEARCH_RESULTS, merged);
             } catch (Exception e) {
@@ -179,7 +187,7 @@ public final class ChainGraphFactory implements GraphFactory {
                 return foldGuard(CITE_NODE, e, state);
             }
             try {
-                List<Citation> citations = citeTool.cite(state.searchResults(), null);
+                List<Citation> citations = traceToolCall("cite_sources", taskId, () -> citeTool.cite(state.searchResults(), null));
                 String resultJson = buildResultJson(state.plan(), state.summary(), citations, state.degraded());
                 return Map.of(ChainState.CITATIONS, citations, ChainState.RESULT, resultJson);
             } catch (Exception e) {
@@ -187,6 +195,31 @@ public final class ChainGraphFactory implements GraphFactory {
                 return fold(CITE_NODE, e.getMessage());
             }
         };
+    }
+
+    private <T> T traceToolCall(String toolName, UUID taskId, java.util.function.Supplier<T> action) {
+        Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
+        if (tracer == null || IN_TOOL_CALL.get()) {
+            return action.get();
+        }
+        IN_TOOL_CALL.set(true);
+        Span span = tracer.nextSpan().name(toolName);
+        if (taskId != null) {
+            span.tag("task_id", taskId.toString());
+        }
+        span.start();
+        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
+            return action.get();
+        } catch (Throwable t) {
+            span.error(t);
+            throw t;
+        } finally {
+            try {
+                span.end();
+            } finally {
+                IN_TOOL_CALL.set(false);
+            }
+        }
     }
 
     private static List<String> deriveQueries(String plan) {
