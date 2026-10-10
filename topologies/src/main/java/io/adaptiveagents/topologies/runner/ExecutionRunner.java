@@ -16,10 +16,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import javax.sql.DataSource;
 import org.bsc.langgraph4j.CompileConfig;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -53,10 +57,23 @@ import org.springframework.stereotype.Component;
  * The final state maps to a terminal status in precedence order: a {@code guardRejected} value of
  * {@code DeadlineExceededException}/{@code BudgetExceededException} becomes
  * {@code DEADLINE_EXCEEDED}/{@code BUDGET_EXCEEDED}; a folded error (topology-level failure)
- * becomes {@code FAILED}; otherwise a non-null result becomes {@code SUCCEEDED}. In-flight LLM
- * calls are not interrupted — guards fire at node boundaries only; node-level future timeouts land
- * in T19/T20. Nodes stay persistence-free — the runner alone owns
+ * becomes {@code FAILED}; otherwise a non-null result becomes {@code SUCCEEDED}. Nodes stay
+ * persistence-free — the runner and the deadline sweep alone own
  * {@link TaskStore}/{@link ProgressService}.</p>
+ *
+ * <p><strong>Deadline guard, no zombies.</strong> Boundary guards stop a run between nodes; the
+ * runtime sweep ({@code RunningTaskSweep}) stops one <em>mid-node</em>, where no boundary ever
+ * fires. Every graph invoke is registered in an in-flight registry keyed by task id before it is
+ * handed to the executor, and deregistered in a {@code finally} once its {@code get()} returns or
+ * throws. {@link #cancel(UUID)} removes the entry and interrupts the worker thread; the resulting
+ * {@link CancellationException} — caught ahead of {@link ExecutionException}, of which it is not
+ * a subtype — is mapped to {@code DEADLINE_EXCEEDED} and the {@code executeAsync} future then
+ * completes normally with that outcome (never a zombie run future). Finalization ownership per
+ * path: a boundary-guard rejection is finalized by the outcome mapping; a sweep cancel by the
+ * runner's cancellation branch; a RUNNING row with no local run (abandoned or foreign) directly
+ * by the sweep. The two finalizers are idempotent against each other: the optimistic-locked
+ * terminal transition lets exactly one win and the loser absorbs
+ * {@link IllegalTaskStateException}.</p>
  */
 @Component
 public final class ExecutionRunner {
@@ -78,6 +95,13 @@ public final class ExecutionRunner {
 
     /** Unpooled virtual-thread executor for graph invokes. Never pooled. */
     private static final ExecutorService VIRTUAL = Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * In-flight graph runs keyed by task id: registered before a run is handed to the executor,
+     * deregistered when its {@code get()} returns or throws (or when {@link #cancel(UUID)}
+     * removes the entry). This registry is the sweep's cancel surface.
+     */
+    private final ConcurrentHashMap<UUID, Future<Map<String, Object>>> inFlight = new ConcurrentHashMap<>();
 
     private final TopologyRegistry topologyRegistry;
     private final TaskStore taskStore;
@@ -163,6 +187,34 @@ public final class ExecutionRunner {
         return hasCheckpoints(taskId) ? resumeAsync(taskId) : restartAsync(taskId);
     }
 
+    /**
+     * Cancels the in-flight graph run for {@code taskId}, interrupting its worker thread
+     * ({@code mayInterrupt = true}), and reports whether an in-flight run was found. Both a
+     * successful cancel and a run that completed in the interim race count as found: the caller
+     * treats {@code true} as "the runner side settles the outcome” — either the cancellation
+     * branch finalizes {@code DEADLINE_EXCEEDED}, or the run finalized on its own moments
+     * earlier. {@code false} means no local run exists for the task (row left RUNNING by an
+     * abandoned or foreign run) and the caller must finalize directly.
+     */
+    public boolean cancel(UUID taskId) {
+        Future<Map<String, Object>> run = inFlight.remove(taskId);
+        if (run == null) {
+            return false;
+        }
+        boolean mayInterruptIfRunning = true;
+        run.cancel(mayInterruptIfRunning);
+        return true;
+    }
+
+    /**
+     * Number of graph runs currently in flight. The executor-side no-zombie assertion surface:
+     * a value of zero after a task reaches a terminal status means no run future is still parked
+     * in {@link #runAndMap} (the ThreadMXBean-style thread-baseline check, as an executor assert).
+     */
+    public int inFlightCount() {
+        return inFlight.size();
+    }
+
     private boolean hasCheckpoints(UUID taskId) {
         // The saver stores the task id as thread_name; see LeakFreePostgresSaver for the join. A
         // missing saver table means no graph ever ran here, which is the restart path.
@@ -192,9 +244,17 @@ public final class ExecutionRunner {
     }
 
     private Outcome runAndMap(UUID taskId, TaskRecord task, Map<String, Object> input) {
+        // Registered BEFORE the run is handed to the executor: a cancel arriving at any instant
+        // after registration finds the entry (a submit()-then-put() shape would leave a window
+        // in which the sweep misses the run and finalizes underneath it).
+        FutureTask<Map<String, Object>> run = new FutureTask<>(() -> invokeGraph(task, input));
+        inFlight.put(taskId, run);
         try {
-            Map<String, Object> data = VIRTUAL.submit(() -> invokeGraph(task, input)).get();
+            VIRTUAL.execute(run);
+            Map<String, Object> data = run.get();
             return mapOutcome(taskId, data);
+        } catch (CancellationException e) {
+            return cancelledOutcome(taskId, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted running task " + taskId, e);
@@ -205,7 +265,44 @@ public final class ExecutionRunner {
             taskStore.completeTerminal(taskId, TaskStatus.FAILED, errorJson(message));
             progressService.publish(taskId, TASK_FAILED, reasonPayload(message));
             return new Outcome(TaskStatus.FAILED, message);
+        } finally {
+            // Two-arg remove: evict only this run's entry, never a newer run registered for the
+            // same task id in the interim.
+            inFlight.remove(taskId, run);
         }
+    }
+
+    /**
+     * Terminal mapping for a cancelled run (deadline sweep): {@code DEADLINE_EXCEEDED},
+     * published and persisted, then a normal outcome — never a rethrow, so the caller's
+     * {@code executeAsync} future completes instead of leaking as a zombie. Idempotent against
+     * any other finalizer (sweep-direct on a no-local-run misread, boundary guard, foreign
+     * process): the optimistic-locked terminal transition rejects the second writer with
+     * {@link IllegalTaskStateException}, which is absorbed here at info — the task is already
+     * terminal, which is all this path wants.
+     */
+    private Outcome cancelledOutcome(UUID taskId, CancellationException error) {
+        if (carriesInterrupt(error)) {
+            Thread.currentThread().interrupt();
+        }
+        String reason = "cancelled by deadline sweep";
+        try {
+            taskStore.completeTerminal(taskId, TaskStatus.DEADLINE_EXCEEDED, errorJson(reason));
+            progressService.publish(taskId, TASK_DEADLINE_EXCEEDED, reasonPayload(reason));
+        } catch (IllegalTaskStateException alreadyFinalized) {
+            log.info("Task {} finalized elsewhere while its run was cancelled (absorbed): {}",
+                    taskId, alreadyFinalized.getMessage());
+        }
+        return new Outcome(TaskStatus.DEADLINE_EXCEEDED, reason);
+    }
+
+    private static boolean carriesInterrupt(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause() == current ? null : current.getCause()) {
+            if (current instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> invokeGraph(TaskRecord task, Map<String, Object> input) {
