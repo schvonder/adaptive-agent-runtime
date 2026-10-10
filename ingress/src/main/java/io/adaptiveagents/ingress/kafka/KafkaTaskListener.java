@@ -4,8 +4,10 @@ import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.adaptiveagents.core.envelope.TaskEnvelope;
-import io.adaptiveagents.ingress.rest.TaskIngressService;
 import io.adaptiveagents.core.store.TaskRecord;
+import io.adaptiveagents.ingress.common.EnvelopeValidator;
+import io.adaptiveagents.ingress.common.TaskValidationException;
+import io.adaptiveagents.ingress.rest.TaskIngressService;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
@@ -69,8 +71,8 @@ public class KafkaTaskListener {
         TaskEnvelope envelope;
         try {
             envelope = objectMapper.readValue(record.value(), TaskEnvelope.class);
-            validate(envelope);
-        } catch (JacksonException | ValidationException e) {
+            EnvelopeValidator.validate(envelope);
+        } catch (JacksonException | TaskValidationException e) {
             return poison(record, e.getMessage());
         }
         try {
@@ -135,34 +137,5 @@ public class KafkaTaskListener {
     private static String headerValue(ConsumerRecord<String, String> record, String header) {
         var value = record.headers().lastHeader(header);
         return value == null ? null : new String(value.value(), StandardCharsets.UTF_8);
-    }
-
-    /** Semantic failures carried as a control-flow signal into the poison path. */
-    private static final class ValidationException extends RuntimeException {
-        ValidationException(String detail) {
-            super(detail);
-        }
-    }
-
-    /** Mirrors the REST ingress's manual envelope validation (TaskController rules). */
-    private static void validate(TaskEnvelope envelope) {
-        if (envelope.taskId() == null) {
-            throw new ValidationException("task_id is required");
-        }
-        if (!"research".equals(envelope.taskType())) {
-            throw new ValidationException("task_type must be 'research' (only v1 type supported)");
-        }
-        if (envelope.prompt() == null || envelope.prompt().isBlank()) {
-            throw new ValidationException("prompt must not be blank");
-        }
-        if (envelope.breadthHint() < 1 || envelope.breadthHint() > 5) {
-            throw new ValidationException("breadth_hint must be between 1 and 5");
-        }
-        if (envelope.deadlineMs() != null && envelope.deadlineMs() <= 0) {
-            throw new ValidationException("deadline_ms must be greater than 0");
-        }
-        if (envelope.budgetUsd() != null && envelope.budgetUsd().signum() <= 0) {
-            throw new ValidationException("budget_usd must be greater than 0");
-        }
     }
 }
