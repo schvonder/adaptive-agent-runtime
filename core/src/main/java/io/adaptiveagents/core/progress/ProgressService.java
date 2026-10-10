@@ -53,4 +53,34 @@ public class ProgressService {
                 taskId, sinceSeq
         );
     }
+
+    /**
+     * Highest assigned global event sequence, {@code 0} when no event exists yet. Used by
+     * live-tail publishers (e.g. the Kafka progress topic) to anchor their cursor at startup
+     * so they relay only events that appear from app start onward.
+     */
+    public long latestSeq() {
+        Long latest = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(seq), 0) FROM progress_events", Long.class);
+        return latest == null ? 0L : latest;
+    }
+
+    /**
+     * All events strictly after {@code sinceSeq} across ALL tasks, in global {@code seq}
+     * ascending order (per-task ordering is implied: seq is monotonically assigned per insert).
+     * Live-tail counterpart of the per-task {@link #sinceSeq(UUID, long)}.
+     */
+    public List<ProgressEvent> sinceSeqGlobally(long sinceSeq) {
+        return jdbcTemplate.query(
+                "SELECT seq, task_id, type, payload, created_at FROM progress_events WHERE seq > ? ORDER BY seq ASC",
+                (rs, rowNum) -> new ProgressEvent(
+                        rs.getLong("seq"),
+                        UUID.fromString(rs.getString("task_id")),
+                        rs.getString("type"),
+                        rs.getString("payload"),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                ),
+                sinceSeq
+        );
+    }
 }
