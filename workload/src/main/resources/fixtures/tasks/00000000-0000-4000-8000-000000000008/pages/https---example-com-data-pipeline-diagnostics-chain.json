@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/data-pipeline-diagnostics-chain",
+  "content": "Sequential diagnostic chains link anomaly detection metrics to query profile logs, enabling automated triage and root-cause analysis for streaming data pipelines."
+}

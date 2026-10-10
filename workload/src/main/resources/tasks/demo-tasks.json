@@ -1,0 +1,74 @@
+[
+  {
+    "task_id": "00000000-0000-4000-8000-000000000001",
+    "task_type": "research",
+    "prompt": "Summarize the key architectural principles and core components of single autonomous agent runtimes.",
+    "breadth_hint": 1
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000002",
+    "task_type": "research",
+    "prompt": "Analyze how function calling and tool invocation protocols allow LLMs to interact with external APIs safely.",
+    "breadth_hint": 1
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000003",
+    "task_type": "research",
+    "prompt": "Review short-term and long-term memory patterns in autonomous agent architectures, including conversational working memory, key-value state persistence across turns, and vector database embeddings for historical context retrieval. Identify trade-offs between context window utilization and state management complexity.",
+    "breadth_hint": 1
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000004",
+    "task_type": "research",
+    "prompt": "Conduct an in-depth investigation into input validation, output sanitization, and execution boundary guardrails for autonomous LLM agents in production environments. Explore techniques for detecting prompt injection, preventing indirect data exfiltration through tool outputs, and mitigating unexpected multi-step tool recursion loops. Evaluate policy enforcement approaches such as static schema validation, deterministic rule interceptors, and secondary evaluator model monitors. Analyze how these safeguards prevent catastrophic actions while maintaining low latency and avoiding false-positive execution cancellations in mission-critical applications. Contrast centralized API gateway enforcement with decentralized agent-level boundary interceptors, focusing on resilience, observability, and audit compliance across enterprise cloud infrastructure and mission-critical automated pipelines.",
+    "breadth_hint": 1
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000005",
+    "task_type": "research",
+    "prompt": "Examine sequential verification pipelines where research outputs pass through plan, search, summarize, and citation stages. Analyze error propagation risks between successive steps and discuss how intermediate validation checks prevent hallucinations from cascading into final research summaries.",
+    "breadth_hint": 2
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000006",
+    "task_type": "research",
+    "prompt": "Investigate multi-step literature review workflows where initial search queries are refined based on preliminary findings. Detail how chaining query formulation, result filtering, document retrieval, and comparative summarization produces higher-fidelity domain syntheses than unguided single-pass queries.",
+    "breadth_hint": 3
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000007",
+    "task_type": "research",
+    "prompt": "Analyze iterative code generation pipelines where code generation, automated static analysis, test execution, and refactoring occur in a linear chain of specialized agents. Explore how typed intermediate representation formats and strict compiler feedback loops reduce semantic errors in generated software. Discuss strategies for handling pipeline stalls when static analysis fails repeatedly, including backoff strategies, prompt mutation, and graceful degradation towards human-in-the-loop review. Contrast this chained approach with monolithic zero-shot code generation models, emphasizing developer productivity, maintainability, and security verification in modern software engineering workflows across enterprise distributed microservice stacks and cloud deployments. Examine how automated unit test generation verifies functional correctness before human review.",
+    "breadth_hint": 2
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000008",
+    "task_type": "research",
+    "prompt": "Evaluate a sequential diagnostic chain for ETL pipelines experiencing data drift and latency spikes. Detail how an anomaly detection step informs query profiling, which in turn feeds into resource reconfiguration and automated alerting before notifying site reliability engineering teams.",
+    "breadth_hint": 2
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000009",
+    "task_type": "research",
+    "prompt": "Conduct a comprehensive comparative analysis of modern distributed consensus algorithms, specifically Raft, Multi-Paxos, and Byzantine Fault Tolerant protocols across high-throughput transactional systems. Analyze how each consensus mechanism balances leader election latency, log replication overhead, partition tolerance, and network partition recovery under asymmetric partition scenarios. Investigate real-world failure models in globally distributed database deployments, evaluating how disk fsync bottlenecks and TCP message serialization impact overall transaction commit rates. Provide clear quantitative criteria for choosing an optimal consensus protocol based on network topology, cluster size, throughput targets, and consistency guarantees in latency-sensitive cloud platforms and multi-region microservices.",
+    "breadth_hint": 3
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000010",
+    "task_type": "research",
+    "prompt": "Perform an extensive multi-perspective evaluation of large language model capabilities across reasoning, factual accuracy, mathematical problem solving, and code synthesis benchmarks. Investigate how benchmark contamination, automated prompt variations, and judge model bias influence reported performance across state-of-the-art open-weights and proprietary models. Evaluate standardized evaluation suites including MMLU, GSM8K, HumanEval, and SWE-bench, identifying specific failure modes such as stylistic sycophancy, reward hacking, and catastrophic forgetting during post-training fine-tuning phases. Examine how multi-turn evaluation protocols differ from single-turn static prompts in revealing reasoning degradation, context rot, and conversational drift over long context windows. Analyze the cost-performance Pareto frontiers across model scales from 7B to 405B parameters, assessing where smaller distilled models matched with specialized prompt engineering or tool augmentation surpass raw frontier models in vertical domain enterprise applications. Discuss the methodological challenges of automated grading using LLM-as-a-judge frameworks, including position bias, length bias, self-enhancement bias, and inconsistent calibration across diverse domain prompts. Propose a robust evaluation pipeline incorporating programmatic assertions, deterministic unit tests, reference-grounded cross-examination, and confidence calibration scoring to establish verifiable reliability boundaries for generative models in enterprise environments. Detail telemetry instrumentation, adversarial test generation, and automated regression tracking necessary for continuous evaluation in production deployment pipelines. Furthermore, evaluate environmental efficiency, inference FLOPs, quantization degradation thresholds, memory bandwidth saturation under multi-tenant serving, and hardware acceleration profiles across diverse edge and server silicon architectures. Finally, synthesize guidelines for continuous benchmark validation, red-teaming against jailbreaks, and automated canary deployments in mission-critical customer-facing production systems.",
+    "breadth_hint": 2
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000011",
+    "task_type": "research",
+    "prompt": "Synthesize an autonomous systems governance framework addressing safety certification, continuous telemetry auditing, human override hierarchies, and legal liability distribution across automated critical infrastructure. Propose operational criteria for supervisor models monitoring semi-autonomous sub-agents.",
+    "breadth_hint": 4
+  },
+  {
+    "task_id": "00000000-0000-4000-8000-000000000012",
+    "task_type": "research",
+    "prompt": "Design a scalable multi-agent supervisor architecture for complex enterprise workflows that require dynamic sub-task decomposition, parallel specialized delegate execution, iterative draft reviews, and centralized quality sign-off. Detail the hierarchical supervision protocols, state-space communication schemas, and error isolation mechanisms needed to coordinate dozens of specialized worker agents operating over heterogeneous backends. Evaluate mechanisms for supervisor-critic convergence loops, detecting divergence or unproductive cyclic revisions between workers and domain critics. Address deadlocks, token consumption quotas, and context window partitioning across long-horizon planning and execution cycles in mission-critical environments and high-reliability data platforms.",
+    "breadth_hint": 5
+  }
+]

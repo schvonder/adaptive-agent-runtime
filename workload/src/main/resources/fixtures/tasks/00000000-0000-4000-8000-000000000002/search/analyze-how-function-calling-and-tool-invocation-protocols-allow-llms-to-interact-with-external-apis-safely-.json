@@ -1,0 +1,7 @@
+[
+  {
+    "title": "Tool Calling Protocols for LLMs",
+    "url": "https://example.com/agent-tool-calling-protocols",
+    "snippet": "Function calling allows language models to generate structured invocation arguments adhering to JSON schemas."
+  }
+]

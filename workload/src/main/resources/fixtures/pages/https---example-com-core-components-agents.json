@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/core-components-agents",
+  "content": "Modern LLM agent architectures rely on structured JSON tool calls, bounded iteration limits, and conversation state persistence."
+}

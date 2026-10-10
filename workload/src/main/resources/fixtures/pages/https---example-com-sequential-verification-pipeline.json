@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/sequential-verification-pipeline",
+  "content": "In a sequential verification pipeline, intermediate validation gates check each stage output, preventing early hallucinated claims from corrupting subsequent steps."
+}

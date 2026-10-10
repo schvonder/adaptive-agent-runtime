@@ -1,0 +1,7 @@
+[
+  {
+    "title": "Comparative Distributed Consensus: Raft vs Paxos",
+    "url": "https://example.com/distributed-consensus-protocols",
+    "snippet": "Comparing Raft, Multi-Paxos, and BFT consensus models across leader election, log replication, and partition handling."
+  }
+]

@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/distributed-consensus-protocols",
+  "content": "Distributed consensus mechanisms balance write throughput, quorum latency, and partition recovery times under heterogeneous network delays."
+}

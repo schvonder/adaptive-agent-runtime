@@ -1,0 +1,7 @@
+[
+  {
+    "title": "Guardrails and Execution Boundaries for LLM Agents",
+    "url": "https://example.com/agent-guardrails-and-safety-boundaries",
+    "snippet": "Execution guardrails enforce input validation, prompt injection defense, and output sanitization policies."
+  }
+]

@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/enterprise-multi-agent-orchestration",
+  "content": "Enterprise multi-agent orchestration architectures employ a supervisor agent that decomposes incoming requests, assigns tasks to specialized workers, and moderates critic evaluations."
+}

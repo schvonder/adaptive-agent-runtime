@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/agent-guardrails-and-safety-boundaries",
+  "content": "Policy guardrails combine schema checking, regex filtering, and secondary validation agents to prevent malicious tool execution and runaway recursion."
+}

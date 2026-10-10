@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Single Autonomous Agent Architectures",
+    "url": "https://example.com/single-agent-architecture",
+    "snippet": "Single autonomous agents typically combine prompt-driven planners, execution tools, and memory stores."
+  },
+  {
+    "title": "Core Components of Modern LLM Agents",
+    "url": "https://example.com/core-components-agents",
+    "snippet": "Key components include context window management, tool calling loops, and self-reflection mechanisms."
+  }
+]

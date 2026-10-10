@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/agent-tool-calling-protocols",
+  "content": "Safe tool calling protocols isolate tool execution in sandboxed environments, validate inputs with strict schema guards, and require explicit permission models."
+}

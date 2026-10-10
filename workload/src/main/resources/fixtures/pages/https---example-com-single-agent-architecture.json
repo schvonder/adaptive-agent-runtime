@@ -1,0 +1,4 @@
+{
+  "url": "https://example.com/single-agent-architecture",
+  "content": "Single autonomous agent architectures implement a continuous control loop that perceives user prompts, plans tool actions, and synthesizes answers."
+}
