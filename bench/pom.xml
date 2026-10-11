@@ -79,5 +79,12 @@
                 <test>BenchmarkRunnerTest</test>
             </properties>
         </profile>
+        <profile>
+            <id>benchmark-real</id>
+            <properties>
+                <test>RealBenchmarkTest</test>
+                <benchmark.real>true</benchmark.real>
+            </properties>
+        </profile>
     </profiles>
 </project>

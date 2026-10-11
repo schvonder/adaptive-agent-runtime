@@ -68,7 +68,16 @@ public class LlmJudge {
                     .content();
 
             if (responseText != null) {
-                JsonNode json = MAPPER.readTree(responseText);
+                String clean = responseText.trim();
+                if (clean.startsWith("```json")) {
+                    clean = clean.substring(7);
+                } else if (clean.startsWith("```")) {
+                    clean = clean.substring(3);
+                }
+                if (clean.endsWith("```")) {
+                    clean = clean.substring(0, clean.length() - 3);
+                }
+                JsonNode json = MAPPER.readTree(clean.trim());
                 if (json.has("score")) {
                     int score = json.get("score").asInt();
                     return Math.max(0, Math.min(5, score));

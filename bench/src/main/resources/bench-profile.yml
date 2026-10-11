@@ -1,11 +1,15 @@
 # Benchmark Profile Configuration (T26 / T27)
+# NOTE (T27): pinned model switched gemini-3.8-flash-vertex -> gemini-3-flash because the
+# proxy's gemini-3.8-flash-vertex model group started returning 403 PERMISSION_DENIED
+# mid-run (verified by direct probes); gemini-3-flash is the verified-working equivalent
+# on the same proxy. Pricing values are profile-configured estimates for the flash tier.
 active-profile: vertex-proxy
 
 profiles:
   vertex-proxy:
     provider: openai-compatible
     base-url: http://localhost:4000
-    model: gemini-3.8-flash-vertex
+    model: gemini-3-flash
     api-key-env: RUNTIME_BENCH_API_KEY
     temperature: 0.0
     seed: 42
@@ -27,7 +31,7 @@ profiles:
       output-per-1m: 0.00
 
 judge:
-  model: gemini-3.8-flash-vertex
+  model: gemini-3-flash
   temperature: 0.0
   seed: 42
   rubric:

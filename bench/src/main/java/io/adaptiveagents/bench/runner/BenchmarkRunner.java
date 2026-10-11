@@ -91,6 +91,7 @@ public class BenchmarkRunner {
                 List<Long> latencies = new ArrayList<>();
                 List<BigDecimal> costs = new ArrayList<>();
                 List<Integer> qualities = new ArrayList<>();
+                String failureReason = null;
 
                 for (int r = 1; r <= runs; r++) {
                     UUID runId = UUID.randomUUID();
@@ -109,7 +110,7 @@ public class BenchmarkRunner {
                     routingService.route(envelope, System.currentTimeMillis());
                     executionRunner.executeAsync(runId);
 
-                    String terminalStatus = awaitTerminal(runId, 30_000L);
+                    String terminalStatus = awaitTerminal(runId, 120_000L);
                     long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
                     latencies.add(latencyMs);
 
@@ -120,13 +121,22 @@ public class BenchmarkRunner {
                     BigDecimal runCost = readCost(runId, task.prompt(), resultJson, profile);
                     costs.add(runCost);
 
-                    int quality = judge.evaluate(task.prompt(), null, resultJson);
+                    int quality = 0;
+                    if ("SUCCEEDED".equals(terminalStatus) && resultJson != null) {
+                        quality = judge.evaluate(task.prompt(), null, resultJson);
+                    } else if (failureReason == null) {
+                        failureReason = "run " + r + " " + terminalStatus;
+                    }
                     qualities.add(quality);
+
+                    log.info("Task {} ({}) [{}] run {}/{} -> {} ms, cost: ${}, quality: {}, status: {}",
+                            task.taskId(), task.title(), topology, r, runs, latencyMs, runCost, quality, terminalStatus);
                 }
 
                 long p50Latency = medianLong(latencies);
                 BigDecimal medianCost = medianBigDecimal(costs);
                 double medianQuality = medianDouble(qualities);
+                String cellStatus = failureReason == null ? "OK" : "ERROR";
 
                 results.add(new BenchmarkCell(
                         task.taskId(),
@@ -136,9 +146,11 @@ public class BenchmarkRunner {
                         p50Latency,
                         medianCost,
                         medianQuality,
-                        "OK",
-                        null
+                        cellStatus,
+                        failureReason
                 ));
+                log.info("Cell finished: Task {} [{}] -> P50: {} ms, Cost: ${}, Quality: {}, Status: {}",
+                        task.taskId(), topology, p50Latency, medianCost, medianQuality, cellStatus);
             }
         }
 
@@ -175,6 +187,18 @@ public class BenchmarkRunner {
     }
 
     private BigDecimal readCost(UUID taskId, String prompt, String result, BenchProfileConfig.ProfileEntry profile) {
+        long[] tokenCounts = jdbcTemplate.query(
+                "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0) FROM task_cost_entries WHERE task_id = ?",
+                rs -> rs.next() ? new long[]{rs.getLong(1), rs.getLong(2)} : new long[]{0L, 0L},
+                taskId);
+        if (tokenCounts != null && (tokenCounts[0] > 0 || tokenCounts[1] > 0)) {
+            BigDecimal inputCost = BigDecimal.valueOf(tokenCounts[0]).multiply(profile.inputPerMillion())
+                    .divide(ONE_MILLION, 6, RoundingMode.HALF_UP);
+            BigDecimal outputCost = BigDecimal.valueOf(tokenCounts[1]).multiply(profile.outputPerMillion())
+                    .divide(ONE_MILLION, 6, RoundingMode.HALF_UP);
+            return inputCost.add(outputCost).setScale(6, RoundingMode.HALF_UP);
+        }
+
         BigDecimal recordedSpend = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(SUM(cost_usd), 0) FROM task_cost_entries WHERE task_id = ?",
                 BigDecimal.class, taskId);

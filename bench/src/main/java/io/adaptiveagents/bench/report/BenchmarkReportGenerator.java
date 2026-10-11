@@ -70,11 +70,30 @@ public class BenchmarkReportGenerator {
         return sb.toString();
     }
 
+    public static String generateFullReport(BenchProfileConfig config, List<BenchmarkCell> cells, String analysis, String reproduction) {
+        StringBuilder sb = new StringBuilder(generateMarkdown(config, cells));
+        if (analysis != null && !analysis.isBlank()) {
+            sb.append("\n## Analysis\n\n").append(analysis.trim()).append("\n");
+        }
+        if (reproduction != null && !reproduction.isBlank()) {
+            sb.append("\n## Reproduction Instructions\n\n").append(reproduction.trim()).append("\n");
+        }
+        return sb.toString();
+    }
+
     public static void writeToFile(Path destination, BenchProfileConfig config, List<BenchmarkCell> cells) throws IOException {
         if (destination.getParent() != null) {
             Files.createDirectories(destination.getParent());
         }
         String markdown = generateMarkdown(config, cells);
+        Files.writeString(destination, markdown, StandardCharsets.UTF_8);
+    }
+
+    public static void writeFullReportToFile(Path destination, BenchProfileConfig config, List<BenchmarkCell> cells, String analysis, String reproduction) throws IOException {
+        if (destination.getParent() != null) {
+            Files.createDirectories(destination.getParent());
+        }
+        String markdown = generateFullReport(config, cells, analysis, reproduction);
         Files.writeString(destination, markdown, StandardCharsets.UTF_8);
     }
 }
