@@ -1,0 +1,15 @@
+# Build context for the app image (multi-module Maven repo) — keep it lean.
+.git
+.omo
+.env
+**/target
+*.log
+bench-run.log
+scripts
+docs
+.idea
+*.iml
+.DS_Store
+compose.yaml
+compose.jaeger.yml
+.dockerignore

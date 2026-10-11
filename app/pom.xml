@@ -16,6 +16,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
+        <!-- Boot 4's modularized autoconfiguration: without this module the packaged
+             app never applies the core db/migration scripts (tests run the Flyway API
+             explicitly, which masked the gap until the compose stack booted the jar). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

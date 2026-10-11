@@ -10,7 +10,9 @@ import org.springframework.test.context.ActiveProfiles;
     "spring.datasource.url=jdbc:postgresql://localhost:5432/postgres",
     "spring.datasource.username=postgres",
     "spring.datasource.password=postgres",
-    "spring.datasource.driver-class-name=org.postgresql.Driver"
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
+    // DB-less context smoke: without this the flyway initializer eagerly opens a connection.
+    "spring.flyway.enabled=false"
 })
 @ActiveProfiles({"stub-classifier", "fixture-model"})
 public class ApplicationTest {
