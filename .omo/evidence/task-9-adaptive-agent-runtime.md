@@ -48,7 +48,7 @@ LlmClassifierWireMockTest methods (surefire report): `ambiguousValidSchema`, `am
 | WireMock: malformed LLM output → rule fallback (asserted) | `ambiguousMalformedOutput` green |
 | CLEAR bands never hit the LLM endpoint (WireMock verify 0 calls) | `clearBandsNeverCallLlm` green |
 | Endpoint 500 → fallback verdict + rationale records fallback reason | `endpoint500` green |
-| LLM called only in AMBIGUOUS band; temperature 0 | Enforced by `clearBandsNeverCallLlm` + structured-output config in `LlmClassifier` (commit 52d94bbf/157ae1b diff) |
+| LLM called only in AMBIGUOUS band; temperature 0 | Enforced by `clearBandsNeverCallLlm` + structured-output config in `LlmClassifier` (commit 52d4bbf/157ae1b diff) |
 
 ## Not re-runnable post-hoc
 
