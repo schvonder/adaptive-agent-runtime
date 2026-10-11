@@ -53,6 +53,15 @@ By default the stack is hermetic: the `fixture-model` Spring profile registers a
 
 Tracing: while the stack is up, open the Jaeger UI at http://localhost:16686 and select service `adaptive-agent-runtime`. Every node execution and tool call is a span, and progress event payloads carry the `traceId`.
 
+## Demo
+
+[`scripts/demo.sh`](scripts/demo.sh) walks the runtime end to end over the compose stack: three research tasks of rising complexity via REST+SSE — `SOLO`, then `FAN_OUT`/GATHER (watch the three `branch-*` node starts interleave), then `SUPERVISOR_TEAM` (the researcher → writer → critic loop over two critic rounds) — followed by a Kafka request/reply roundtrip with the console producer/consumer (the reply ACK shows the `forced_topology` `OVERRIDE` decision) and a raw-curl MCP streamable-http session (`initialize` → `submit_task` → `get_task`). It runs the hermetic `fixture-model` profile — no LLM key needed — and never prints credential values.
+
+The recorded session lives at [docs/demo.cast](docs/demo.cast); play it back with `asciinema play docs/demo.cast`.
+
+<!-- asciinema.org embed placeholder: upload docs/demo.cast at https://asciinema.org and replace this comment with
+     [![asciicast](https://asciinema.org/a/xxxx.svg)](https://asciinema.org/a/xxxx) -->
+
 ## Protocols
 
 Three ingresses map onto the same canonical `TaskEnvelope` JSON body. `task_id` is the idempotency key on every ingress, and no header can override identity or topology.
