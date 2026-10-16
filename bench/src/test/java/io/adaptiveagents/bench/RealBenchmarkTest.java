@@ -40,11 +40,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Executes the real benchmark run (T27) against the live proxy model pinned in
- * bench-profile.yml (verified gemini-3-flash; see the profile's NOTE on the
- * gemini-3.8-flash-vertex 403 switch) across 4 topologies x 12 demo tasks x N runs,
- * scoring output quality with the real LLM judge, and writing BENCHMARK.md to the
- * repository root and bench/target.
+ * Executes the real benchmark run (T27) against the live model pinned in
+ * bench-profile.yml (active profile local-llama: self-hosted llama-server
+ * Qwen3.6-35B-A3B; see the profile's NOTEs for the endpoint history) across
+ * 4 topologies x 12 demo tasks x N runs, scoring output quality with the real
+ * LLM judge, and writing BENCHMARK.md to the repository root and bench/target.
  */
 @SpringBootTest(classes = RealBenchmarkTest.Config.class)
 @ActiveProfiles("stub-classifier")
@@ -109,7 +109,7 @@ public class RealBenchmarkTest {
     }
 
     @Test
-    @Timeout(value = 7200, unit = TimeUnit.SECONDS)
+    @Timeout(value = 14400, unit = TimeUnit.SECONDS)
     void executeRealBenchmarkMatrix() throws Exception {
         log.info("Starting probe before benchmark execution...");
         ChatClient probeClient = chatClientBuilder.build();

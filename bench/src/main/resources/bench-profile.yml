@@ -1,9 +1,13 @@
 # Benchmark Profile Configuration (T26 / T27)
 # NOTE (T27): pinned model switched gemini-3.8-flash-vertex -> gemini-3-flash because the
-# proxy's gemini-3.8-flash-vertex model group started returning 403 PERMISSION_DENIED
-# mid-run (verified by direct probes); gemini-3-flash is the verified-working equivalent
-# on the same proxy. Pricing values are profile-configured estimates for the flash tier.
-active-profile: vertex-proxy
+#   proxy's gemini-3.8-flash-vertex model group started returning 403 PERMISSION_DENIED
+#   mid-run (verified by direct probes); gemini-3-flash is the verified-working equivalent
+#   on the same proxy. Pricing values are profile-configured estimates for the flash tier.
+# NOTE (T27 real run, 2026-10-11): vertex proxy declared permanently unavailable; the real
+#   benchmark ran against the self-hosted llama-server (192.168.1.54:8080, Qwen3.6-35B-A3B
+#   Q5_K_M, 3 slots, tool-calling verified by direct probe). Pricing 0.00 = self-hosted,
+#   no per-token cost; cost columns reflect tokens only.
+active-profile: local-llama
 
 profiles:
   vertex-proxy:
@@ -21,7 +25,7 @@ profiles:
   local-llama:
     provider: openai-compatible
     base-url: http://192.168.1.54:8080
-    model: llama-3.2-3b-instruct
+    model: /mnt/models/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
     api-key-env: LOCAL_LLAMA_API_KEY
     temperature: 0.0
     seed: 42
@@ -31,7 +35,7 @@ profiles:
       output-per-1m: 0.00
 
 judge:
-  model: gemini-3-flash
+  model: /mnt/models/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
   temperature: 0.0
   seed: 42
   rubric:

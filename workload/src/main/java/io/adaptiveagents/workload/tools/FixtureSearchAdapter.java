@@ -89,22 +89,45 @@ public class FixtureSearchAdapter implements SearchTool {
         }
     }
 
+    /**
+     * Slug keys longer than this are looked up by their truncated form; fixture files for
+     * long queries are generated with the same truncation. Filesystems cap file names at
+     * 255 bytes, so full task-prompt slugs (300+ chars) cannot exist as files otherwise.
+     */
+    static final int MAX_KEY_LENGTH = 200;
+
     private List<SearchResult> doSearch(String query) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
-        String slug = Slug.of(query);
-
-        List<SearchResult> cached = fixtures.get(slug);
-        if (cached != null) {
-            return cached;
+        for (String key : candidateKeys(Slug.of(query))) {
+            List<SearchResult> cached = fixtures.get(key);
+            if (cached != null) {
+                log.debug("Fixture HIT: query='{}' -> key='{}'", query, key);
+                return cached;
+            }
+            List<SearchResult> loaded = readFixtureResource(key);
+            if (loaded != null) {
+                log.debug("Fixture HIT (resource): query='{}' -> key='{}'", query, key);
+                return loaded;
+            }
         }
+        log.debug("Fixture MISS: query='{}' (tried keys: {})", query, candidateKeys(Slug.of(query)));
+        return List.of();
+    }
 
+    private static List<String> candidateKeys(String slug) {
+        if (slug.length() <= MAX_KEY_LENGTH) {
+            return List.of(slug);
+        }
+        return List.of(slug, slug.substring(0, MAX_KEY_LENGTH));
+    }
+
+    private List<SearchResult> readFixtureResource(String key) {
         ClassLoader classLoader = FixtureSearchAdapter.class.getClassLoader();
-        ClassPathResource resource = new ClassPathResource(basePath + slug + ".json", classLoader);
+        ClassPathResource resource = new ClassPathResource(basePath + key + ".json", classLoader);
         if (!resource.exists()) {
-            log.debug("No search fixture for query '{}' (expected {})", query, resource.getPath());
-            return List.of();
+            return null;
         }
         try (InputStream in = resource.getInputStream()) {
             return readResults(in);

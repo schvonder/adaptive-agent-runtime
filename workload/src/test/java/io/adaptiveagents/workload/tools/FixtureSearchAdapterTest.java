@@ -32,6 +32,16 @@ class FixtureSearchAdapterTest {
     }
 
     @Test
+    void longSlugFallsBackToTruncatedKey() {
+        String overlongQuery = "truncation-fallback-probe-" + "z".repeat(250);
+
+        List<SearchResult> results = adapter.search(overlongQuery);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).title()).isEqualTo("Truncation Fallback Source");
+    }
+
+    @Test
     void blankOrNullQueryReturnsEmptyList() {
         assertThat(adapter.search("   ")).isEmpty();
         assertThat(adapter.search(null)).isEmpty();
