@@ -20,7 +20,7 @@ import java.util.List;
  *   - 3: +10
  *   - 4 or 5: +20
  * - Deadline Tightness:
- *   - (deadlineMs - nowMs) < 600,000 ms (10 min): +15
+ *   - deadline_ms < 600,000 ms (10 min duration): +15
  *
  * Bands:
  * - Score <= 0: CLEAR_SIMPLE (SOLO)
@@ -65,12 +65,9 @@ public class RuleScorer {
             rationales.add("Breadth >= 4 [+20]");
         }
 
-        if (envelope.deadlineMs() != null) {
-            long remaining = envelope.deadlineMs() - nowMs;
-            if (remaining > 0 && remaining < TIGHT_DEADLINE_MS) {
-                score += 15;
-                rationales.add("Tight deadline (<10m remaining) [+15]");
-            }
+        if (envelope.deadlineMs() != null && envelope.deadlineMs() < TIGHT_DEADLINE_MS) {
+            score += 15;
+            rationales.add("Tight deadline (<10m) [+15]");
         }
 
         Band band;

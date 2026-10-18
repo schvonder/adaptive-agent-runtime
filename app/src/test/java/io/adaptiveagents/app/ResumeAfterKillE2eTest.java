@@ -14,7 +14,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.time.Duration;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -151,7 +151,7 @@ class ResumeAfterKillE2eTest {
     @Timeout(180)
     void deadlineExpiredWhileDownIsNotResumed() throws Exception {
         UUID taskId = UUID.randomUUID();
-        seedRunningChainTask(taskId, System.currentTimeMillis() - Duration.ofHours(1).toMillis());
+        seedRunningChainTask(taskId, 1L);
 
         SpawnedApp app = new SpawnedApp(fatJar(), Paths.get("target", "spawned", "resume-expired.log"), APP_ENV, APP_ARGS);
         try {

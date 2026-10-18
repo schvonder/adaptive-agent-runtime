@@ -85,7 +85,8 @@ public final class RunningTaskSweep {
 
     private void expireIfDue(TaskRecord task) {
         Long deadlineMs = task.deadlineMs();
-        if (deadlineMs == null || System.currentTimeMillis() <= deadlineMs) {
+        if (deadlineMs == null
+                || System.currentTimeMillis() <= task.createdAt().toInstant().toEpochMilli() + deadlineMs) {
             return;
         }
         UUID taskId = task.taskId();

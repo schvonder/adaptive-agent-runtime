@@ -97,7 +97,8 @@ public final class StartupRescan implements ApplicationRunner {
 
     private boolean expiredWhileDown(TaskRecord task) {
         Long deadlineMs = task.deadlineMs();
-        return deadlineMs != null && System.currentTimeMillis() > deadlineMs;
+        return deadlineMs != null
+                && System.currentTimeMillis() > task.createdAt().toInstant().toEpochMilli() + deadlineMs;
     }
 
     private void failOverExpired(TaskRecord task) {

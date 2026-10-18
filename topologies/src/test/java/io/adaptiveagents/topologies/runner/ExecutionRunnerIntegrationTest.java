@@ -160,7 +160,7 @@ class ExecutionRunnerIntegrationTest {
     @Timeout(60)
     void deadlineExceededMidRunCompletesRunFuture() throws Exception {
         UUID taskId = UUID.randomUUID();
-        long deadline = System.currentTimeMillis() + 150;
+        long deadline = 150L;
         routeChain(taskId, deadline);
         chatModel.setDelayMs(300);
         chatModel.enqueue(

@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * <ol>
  *   <li>publishes a {@code NODE_START} progress event carrying the node name;</li>
  *   <li>raises {@link DeadlineExceededException} when the task has a declared {@code deadline_ms}
- *       and the wall clock is already past it;</li>
+ *       duration and the wall clock is already past {@code created_at + deadline_ms};</li>
  *   <li>raises {@link BudgetExceededException} when the task has a declared {@code budget_usd}
  *       that is already non-positive, or when the {@link CostTracker} spend accumulated from model
  *       responses has reached it (T19).</li>
@@ -45,7 +45,8 @@ public final class TaskGuard implements NodeGuard {
                 .orElseThrow(() -> new IllegalStateException("Task not found for guard: " + taskId));
 
         Long deadlineMs = task.deadlineMs();
-        if (deadlineMs != null && System.currentTimeMillis() > deadlineMs) {
+        if (deadlineMs != null
+                && System.currentTimeMillis() > task.createdAt().toInstant().toEpochMilli() + deadlineMs) {
             throw new DeadlineExceededException("deadline exceeded at node " + nodeName);
         }
 

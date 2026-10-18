@@ -122,7 +122,7 @@ class DeadlineSweepIntegrationTest {
     @Timeout(60)
     void sweepCancelsMidNodeHang() throws Exception {
         UUID taskId = UUID.randomUUID();
-        long deadline = System.currentTimeMillis() + 200;
+        long deadline = 200L;
         routeChain(taskId, deadline);
         CountDownLatch neverReleased = new CountDownLatch(1);
         chatModel.blockCall(2, neverReleased);
@@ -149,7 +149,7 @@ class DeadlineSweepIntegrationTest {
     @Timeout(60)
     void planAcceptanceDeadlineWithin5s() throws Exception {
         UUID taskId = UUID.randomUUID();
-        long deadline = System.currentTimeMillis() + 200;
+        long deadline = 200L;
         routeChain(taskId, deadline);
         chatModel.setDelayMs(300);
         chatModel.enqueue(
@@ -196,7 +196,7 @@ class DeadlineSweepIntegrationTest {
     @Timeout(60)
     void sweepFinalizesRunningRowWithoutLocalRun() throws Exception {
         UUID taskId = UUID.randomUUID();
-        routeChain(taskId, System.currentTimeMillis() - 1_000);
+        routeChain(taskId, 1L);
         taskStore.transition(taskId, TaskStatus.RUNNING);
 
         awaitStatus(taskId, TaskStatus.DEADLINE_EXCEEDED, 10_000);
@@ -213,7 +213,7 @@ class DeadlineSweepIntegrationTest {
     @Timeout(60)
     void happyWithinDeadline() throws Exception {
         UUID taskId = UUID.randomUUID();
-        routeChain(taskId, System.currentTimeMillis() + 10_000);
+        routeChain(taskId, 10_000L);
         chatModel.enqueue(
                 ControlledChatModel.text("search adaptive agents\nsearch runtime"),
                 ControlledChatModel.text("Adaptive agents adapt at runtime."));

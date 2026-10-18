@@ -48,8 +48,8 @@ public class RuleScorerTest {
 
     static Stream<Arguments> scoringCases() {
         long now = 1000000L;
-        long tightDeadline = now + 500_000L; // 5 min
-        long relaxedDeadline = now + 1_000_000L; // > 10 min
+        long tightDeadline = 500_000L; // 5 min duration
+        long relaxedDeadline = 1_000_000L; // > 10 min duration
         
         return Stream.of(
             // tiny prompt (tokens<50, -10) + breadth1 (-10) -> score -20 -> CLEAR_SIMPLE, SOLO
