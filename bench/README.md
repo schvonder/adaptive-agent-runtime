@@ -58,19 +58,16 @@ mvn -pl bench test -Pbenchmark
 Generates `target/BENCHMARK.md` capturing benchmark configuration, per-cell medians, and status.
 
 ### Real Model Run (T27)
-Configured via `bench/src/main/resources/bench-profile.yml`:
+Configured via `bench/src/main/resources/bench-profile.yml` — two branches, no profiles:
 
-- **Profiles**:
-  - `vertex-proxy` (default for T27):
-    - Provider: OpenAI-compatible proxy
-    - Base URL: `http://localhost:4000`
-    - Model: `gemini-3.8-flash-vertex`
-    - API Key: Loaded from environment variable `RUNTIME_BENCH_API_KEY` (no literal secret committed)
-    - Pricing: $0.15 / 1M prompt tokens, $0.60 / 1M completion tokens
-  - `local-llama` (alternative local profile):
-    - Base URL: `http://192.168.1.54:8080`
-    - Model: `llama-3.2-3b-instruct`
-    - API Key: Loaded from environment variable `LOCAL_LLAMA_API_KEY`
+- **`model`** (the agent-facing endpoint under benchmark):
+  - Provider: OpenAI-compatible
+  - Base URL: `http://192.168.1.54:8080`
+  - Model: `qwen3.6-35b-a3b` (a model NAME — llama-server must run with `--alias qwen3.6-35b-a3b`; see the yml NOTE)
+  - API Key: loaded from the env var named by `api-key-env` (`RUNTIME_BENCH_API_KEY`; no literal secret committed)
+  - Pricing: 0.00 / 1M (self-hosted)
+- **`judge`** (quality scoring):
+  - Base URL, model, and `api-key-env` configured independently — the judge may point at a different endpoint than the model branch.
 - **Database Configuration**:
   - Self-contained via Testcontainers PostgreSQL in test runs.
   - For external deployments, configure via environment variables:

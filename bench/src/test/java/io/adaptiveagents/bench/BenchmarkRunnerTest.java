@@ -165,15 +165,14 @@ class BenchmarkRunnerTest {
         String markdown = BenchmarkReportGenerator.generateMarkdown(config, cells);
         assertThat(markdown).contains("Multi-Agent Topology Benchmark Results");
         assertThat(markdown).contains("Benchmark Configuration");
-        assertThat(markdown).contains("Active Profile", "vertex-proxy");
-        assertThat(markdown).contains(config.currentProfile().model());
-        assertThat(markdown).contains("RUNTIME_BENCH_API_KEY");
+        assertThat(markdown).contains(config.model().model());
+        assertThat(markdown).contains(config.model().apiKeyEnv());
         assertThat(markdown).contains("Runs per Cell (N)");
         assertThat(markdown).contains("ERROR (missing fixture:");
 
         Path outputPath = Path.of("target/BENCHMARK.md");
         BenchmarkReportGenerator.writeToFile(outputPath, config, demoCells);
         assertThat(Files.exists(outputPath)).isTrue();
-        assertThat(Files.readString(outputPath)).contains(config.currentProfile().model());
+        assertThat(Files.readString(outputPath)).contains(config.model().model());
     }
 }

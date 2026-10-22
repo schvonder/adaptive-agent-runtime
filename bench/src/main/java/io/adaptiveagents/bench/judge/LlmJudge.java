@@ -22,7 +22,7 @@ public class LlmJudge {
 
     public LlmJudge() {
         this(null, new BenchProfileConfig.JudgeConfig(
-                "gemini-3.8-flash-vertex", 0.0, 42, "0-5", "Rubric 0-5"));
+                "", "", "", 0.0, 42, "0-5", "Rubric 0-5"));
     }
 
     public LlmJudge(ChatClient chatClient, BenchProfileConfig.JudgeConfig judgeConfig) {

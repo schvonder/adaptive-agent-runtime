@@ -31,12 +31,11 @@ public class BenchmarkReportGenerator {
 
     public static String generateMarkdown(BenchProfileConfig config, List<BenchmarkCell> cells) {
         StringBuilder sb = new StringBuilder();
-        BenchProfileConfig.ProfileEntry profile = config.currentProfile();
+        BenchProfileConfig.ModelEntry profile = config.model();
 
         sb.append("# Multi-Agent Topology Benchmark Results\n\n");
         sb.append("## Benchmark Configuration\n");
         sb.append("- **Timestamp**: ").append(DateTimeFormatter.ISO_INSTANT.format(Instant.now())).append("\n");
-        sb.append("- **Active Profile**: `").append(config.activeProfile()).append("`\n");
         sb.append("- **Provider**: ").append(profile.provider()).append("\n");
         sb.append("- **Base URL**: ").append(profile.baseUrl()).append("\n");
         sb.append("- **Model**: `").append(profile.model()).append("`\n");
@@ -46,7 +45,8 @@ public class BenchmarkReportGenerator {
         sb.append("- **Runs per Cell (N)**: ").append(profile.runs()).append(" (reporting medians / p50)\n");
         sb.append("- **Pricing**: $").append(profile.inputPerMillion()).append(" / 1M input, $")
                 .append(profile.outputPerMillion()).append(" / 1M output\n");
-        sb.append("- **Judge Model**: `").append(config.judge().model()).append("` (Rubric ").append(config.judge().rubricScale()).append(")\n\n");
+        sb.append("- **Judge Model**: `").append(config.judge().model()).append("` @ ")
+                .append(config.judge().baseUrl()).append(" (Rubric ").append(config.judge().rubricScale()).append(")\n\n");
 
         sb.append("## Results Matrix (4 Topologies x Tasks x N=").append(profile.runs()).append(" runs)\n\n");
         sb.append("| Task ID | Task Title | Topology | P50 Latency (ms) | Median Cost ($) | Quality (0-5) | Status |\n");

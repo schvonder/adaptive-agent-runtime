@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openai.client.OpenAIClient;
+import io.micrometer.observation.ObservationRegistry;
 import io.adaptiveagents.bench.config.BenchProfileConfig;
 import io.adaptiveagents.bench.judge.LlmJudge;
 import io.adaptiveagents.bench.report.BenchmarkReportGenerator;
@@ -26,6 +28,9 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiCommonProperties;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.setup.OpenAiSetup;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,10 +46,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Executes the real benchmark run (T27) against the live model pinned in
- * bench-profile.yml (active profile local-llama: self-hosted llama-server
- * Qwen3.6-35B-A3B; see the profile's NOTEs for the endpoint history) across
- * 4 topologies x 12 demo tasks x N runs, scoring output quality with the real
- * LLM judge, and writing BENCHMARK.md to the repository root and bench/target.
+ * bench-profile.yml (model branch: self-hosted llama-server Qwen3.6-35B-A3B;
+ * see the yml NOTEs for the endpoint history) across 4 topologies x 12 demo
+ * tasks x N runs, scoring output quality with the LLM judge configured by the
+ * yml judge branch, and writing BENCHMARK.md to the repository root and
+ * bench/target.
  */
 @SpringBootTest(classes = RealBenchmarkTest.Config.class)
 @ActiveProfiles("stub-classifier")
@@ -64,7 +70,7 @@ public class RealBenchmarkTest {
         registry.add("spring.datasource.password", postgres::getPassword);
 
         BenchProfileConfig config = BenchProfileConfig.loadDefault();
-        BenchProfileConfig.ProfileEntry profile = config.currentProfile();
+        BenchProfileConfig.ModelEntry profile = config.model();
 
         String rawKey = System.getenv(profile.apiKeyEnv());
         String effectiveApiKey = (rawKey == null || rawKey.isBlank()) ? "missing-key" : rawKey;
@@ -95,6 +101,40 @@ public class RealBenchmarkTest {
 
     @Autowired
     ChatClient.Builder chatClientBuilder;
+
+    /**
+     * Builds a judge ChatClient wired to the judge branch of bench-profile.yml — the judge
+     * may live on a different endpoint than the model under benchmark, so it cannot reuse
+     * the context-wide autoconfigured builder. Mirrors the argument mapping of
+     * OpenAiChatAutoConfiguration#openAiClient via the public OpenAiSetup factory.
+     */
+    private static ChatClient buildJudgeClient(BenchProfileConfig.JudgeConfig judge) {
+        String rawKey = System.getenv(judge.apiKeyEnv());
+        String apiKey = (rawKey == null || rawKey.isBlank()) ? "missing-key" : rawKey;
+
+        OpenAiCommonProperties common = new OpenAiCommonProperties();
+        common.setBaseUrl(judge.baseUrl());
+        common.setApiKey(apiKey);
+        common.setModel(judge.model());
+        OpenAIClient client = OpenAiSetup.setupSyncClient(
+                common.getBaseUrl(),
+                common.getApiKey(),
+                common.getCredential(),
+                common.getMicrosoftDeploymentName(),
+                common.getMicrosoftFoundryServiceVersion(),
+                common.getOrganizationId(),
+                common.isMicrosoftFoundry(),
+                common.isGitHubModels(),
+                common.getModel(),
+                common.getTimeout(),
+                common.getMaxRetries(),
+                common.getProxy(),
+                common.getCustomHeaders(),
+                ObservationRegistry.NOOP,
+                null,
+                List.of());
+        return ChatClient.builder(OpenAiChatModel.builder().openAiClient(client).build()).build();
+    }
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -132,9 +172,9 @@ public class RealBenchmarkTest {
         }
 
         BenchProfileConfig config = BenchProfileConfig.loadDefault();
-        LlmJudge judge = new LlmJudge(chatClientBuilder.build(), config.judge());
+        LlmJudge judge = new LlmJudge(buildJudgeClient(config.judge()), config.judge());
 
-        log.info("Executing benchmark for {} tasks across 4 topologies (N={} runs/cell)...", allTasks.size(), config.currentProfile().runs());
+        log.info("Executing benchmark for {} tasks across 4 topologies (N={} runs/cell)...", allTasks.size(), config.model().runs());
         long startNanos = System.nanoTime();
         List<BenchmarkCell> cells = benchmarkRunner.runBenchmark(allTasks, config, judge);
         long elapsedSec = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
@@ -161,7 +201,7 @@ public class RealBenchmarkTest {
                 # 3. Execute the full real benchmark suite via Maven (uses Testcontainers PostgreSQL)
                 mvn test -pl bench -Pbenchmark-real
                 ```
-                """.formatted(config.currentProfile().model());
+                """.formatted(config.model().model());
 
         Path repoRootDir = findRepoRoot();
         Path repoRootBenchmark = repoRootDir.resolve("BENCHMARK.md");
@@ -177,7 +217,7 @@ public class RealBenchmarkTest {
         String content = Files.readString(repoRootBenchmark);
         assertThat(content).contains("Multi-Agent Topology Benchmark Results");
         assertThat(content).contains("Benchmark Configuration");
-        assertThat(content).contains(config.currentProfile().model());
+        assertThat(content).contains(config.model().model());
         assertThat(content).contains("Results Matrix");
         assertThat(content).contains("Analysis");
         assertThat(content).contains("Reproduction Instructions");

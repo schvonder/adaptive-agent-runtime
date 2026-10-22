@@ -77,8 +77,9 @@
 ## Reproduction Instructions
 
 ```bash
-# 1. Ensure the OpenAI-compatible proxy is reachable at the profile base-url
-curl -s http://localhost:4000/v1/models | grep -q /mnt/models/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
+# 1. Ensure the model endpoint from bench-profile.yml is reachable and serves
+#    the configured model NAME (llama-server: start with --alias qwen3.6-35b-a3b)
+curl -s http://192.168.1.54:8080/v1/models | grep -q qwen3.6-35b-a3b
 
 # 2. Export the benchmark API key referenced by bench-profile.yml
 export RUNTIME_BENCH_API_KEY="<your-api-key>"

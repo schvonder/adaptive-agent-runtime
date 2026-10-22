@@ -94,7 +94,7 @@ class DemoTasksRoutingTest {
         @Bean
         @Primary
         ComplexityClassifier realClassifierPipeline(RuleScorer ruleScorer, ChatClient.Builder chatClientBuilder) {
-            return new LlmClassifier(chatClientBuilder, ruleScorer);
+            return new LlmClassifier(chatClientBuilder, ruleScorer, "");
         }
     }
 

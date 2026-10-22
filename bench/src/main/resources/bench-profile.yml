@@ -1,41 +1,33 @@
-# Benchmark Profile Configuration (T26 / T27)
-# NOTE (T27): pinned model switched gemini-3.8-flash-vertex -> gemini-3-flash because the
-#   proxy's gemini-3.8-flash-vertex model group started returning 403 PERMISSION_DENIED
-#   mid-run (verified by direct probes); gemini-3-flash is the verified-working equivalent
-#   on the same proxy. Pricing values are profile-configured estimates for the flash tier.
-# NOTE (T27 real run, 2026-10-11): vertex proxy declared permanently unavailable; the real
-#   benchmark ran against the self-hosted llama-server (192.168.1.54:8080, Qwen3.6-35B-A3B
-#   Q5_K_M, 3 slots, tool-calling verified by direct probe). Pricing 0.00 = self-hosted,
-#   no per-token cost; cost columns reflect tokens only.
-active-profile: local-llama
+# Benchmark configuration: a single model branch (the agent-facing endpoint the
+# runtime benchmarks) and a full judge branch. No profiles — swap values here.
+#
+# NOTE (model naming): `model` must be a model NAME, never a server-side file
+# path. The self-hosted llama-server at 192.168.1.54:8080 serves its gguf by
+# path unless started with --alias; probe on 2026-10-19 showed it currently
+# exposes /mnt/models/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf. Start it with
+# `--alias qwen3.6-35b-a3b` so the name below resolves.
+#
+# NOTE (pricing): self-hosted endpoint — 0.00 = no per-token cost; cost columns
+# reflect tokens only. History: T27 first pinned the vertex proxy
+# (gemini-3.8-flash-vertex -> gemini-3-flash after 403s), then the proxy was
+# declared permanently unavailable and the run moved to llama-server.
 
-profiles:
-  vertex-proxy:
-    provider: openai-compatible
-    base-url: http://localhost:4000
-    model: gemini-3-flash
-    api-key-env: RUNTIME_BENCH_API_KEY
-    temperature: 0.0
-    seed: 42
-    runs: 3
-    pricing:
-      input-per-1m: 0.15
-      output-per-1m: 0.60
-
-  local-llama:
-    provider: openai-compatible
-    base-url: http://192.168.1.54:8080
-    model: /mnt/models/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
-    api-key-env: LOCAL_LLAMA_API_KEY
-    temperature: 0.0
-    seed: 42
-    runs: 3
-    pricing:
-      input-per-1m: 0.00
-      output-per-1m: 0.00
+model:
+  provider: openai-compatible
+  base-url: http://192.168.1.54:8080
+  model: qwen3.6-35b-a3b
+  api-key-env: RUNTIME_BENCH_API_KEY
+  temperature: 0.0
+  seed: 42
+  runs: 3
+  pricing:
+    input-per-1m: 0.00
+    output-per-1m: 0.00
 
 judge:
-  model: /mnt/models/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf
+  base-url: http://192.168.1.54:8080
+  model: qwen3.6-35b-a3b
+  api-key-env: RUNTIME_BENCH_API_KEY
   temperature: 0.0
   seed: 42
   rubric:

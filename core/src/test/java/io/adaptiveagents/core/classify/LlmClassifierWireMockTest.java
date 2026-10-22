@@ -57,7 +57,8 @@ public class LlmClassifierWireMockTest {
         @Bean
         public LlmClassifier llmClassifier(org.springframework.ai.chat.client.ChatClient.Builder chatClientBuilder, RuleScorer ruleScorer) {
             // @ConditionalOnBean is evaluated at scan time (before this @Bean exists), so scanning would skip LlmClassifier.
-            return new LlmClassifier(chatClientBuilder, ruleScorer);
+            // Blank model: resolve from the global default, as production wiring does when the override is unset.
+            return new LlmClassifier(chatClientBuilder, ruleScorer, "");
         }
         @Bean
         public DataSource dataSource() {

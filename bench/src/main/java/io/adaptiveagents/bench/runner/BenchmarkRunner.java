@@ -65,8 +65,8 @@ public class BenchmarkRunner {
             List<Topology> topologies) {
 
         List<BenchmarkCell> results = new ArrayList<>();
-        int runs = Math.max(3, config.currentProfile().runs());
-        BenchProfileConfig.ProfileEntry profile = config.currentProfile();
+        int runs = Math.max(3, config.model().runs());
+        BenchProfileConfig.ModelEntry profile = config.model();
 
         for (BenchmarkTask task : tasks) {
             boolean fixturesPresent = checkFixtures(task.taskId());
@@ -186,7 +186,7 @@ public class BenchmarkRunner {
         return "TIMEOUT";
     }
 
-    private BigDecimal readCost(UUID taskId, String prompt, String result, BenchProfileConfig.ProfileEntry profile) {
+    private BigDecimal readCost(UUID taskId, String prompt, String result, BenchProfileConfig.ModelEntry profile) {
         long[] tokenCounts = jdbcTemplate.query(
                 "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0) FROM task_cost_entries WHERE task_id = ?",
                 rs -> rs.next() ? new long[]{rs.getLong(1), rs.getLong(2)} : new long[]{0L, 0L},
