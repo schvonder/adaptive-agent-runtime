@@ -41,6 +41,10 @@ services:
       # Optional per-leg override of the LLM classifier model; blank = the global
       # spring.ai.openai.chat.options.model (the model every topology node uses).
       RUNTIME_CLASSIFIER_MODEL: ${RUNTIME_CLASSIFIER_MODEL:-}
+      # Classifier leg selection (llm default; jev routes the AMBIGUOUS band through
+      # the TypeSafe AI decision model) and that leg's API key passthrough.
+      RUNTIME_CLASSIFIER_LEG: ${RUNTIME_CLASSIFIER_LEG:-}
+      RUNTIME_CLASSIFIER_JEV_API_KEY: ${RUNTIME_CLASSIFIER_JEV_API_KEY:-}
       # Micrometer OTLP export → jaeger (application.yml reads this env). The
       # signal-specific var pins the full path verbatim: the generic base var is
       # all the OTel SDK honors when Boot's property layer is bypassed, and it

@@ -5,6 +5,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,9 +16,15 @@ import org.springframework.stereotype.Component;
  * property is blank the request carries no per-call model and Spring AI resolves the global
  * default ({@code spring.ai.openai.chat.options.model}) — the same model every topology node
  * uses.</p>
+ *
+ * <p>Leg selection: active when {@code runtime.classifier.leg=llm} (the default);
+ * {@code runtime.classifier.leg=jev} swaps the AMBIGUOUS leg for the TypeSafe AI decision
+ * model (see {@link io.adaptiveagents.core.classify.jev.JevClassifierConfig}), keeping exactly
+ * one {@code ComplexityClassifier} bean either way.</p>
  */
 @Component
 @ConditionalOnBean(ChatClient.Builder.class)
+@ConditionalOnProperty(name = "runtime.classifier.leg", havingValue = "llm", matchIfMissing = true)
 public class LlmClassifier implements ComplexityClassifier {
 
     private final ChatClient chatClient;

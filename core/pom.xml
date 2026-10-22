@@ -48,6 +48,13 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
+        <!-- Plain TypeSafe AI SDK for the Jev classification leg (JevClassifierConfig wires it
+             explicitly via runtime.classifier.jev.* — deliberately NOT the Spring AI starter). -->
+        <dependency>
+            <groupId>org.springaicommunity</groupId>
+            <artifactId>typesafe-java-sdk</artifactId>
+            <version>0.4.0</version>
+        </dependency>
         <dependency>
             <groupId>org.wiremock</groupId>
             <artifactId>wiremock-standalone</artifactId>
