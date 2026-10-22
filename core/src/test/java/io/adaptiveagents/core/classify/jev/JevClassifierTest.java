@@ -66,13 +66,19 @@ class JevClassifierTest {
     }
 
     private static JevDecision decision(String band, double bandConfidence, String topology, double topologyConfidence) {
-        return new JevDecision(band, bandConfidence, topology, topologyConfidence, "CONFLICTING_SIGNALS");
+        return decision(band, bandConfidence, topology, topologyConfidence, 0.05);
+    }
+
+    private static JevDecision decision(
+            String band, double bandConfidence, String topology, double topologyConfidence, double injectionSuspicion) {
+        return new JevDecision(band, bandConfidence, topology, topologyConfidence, injectionSuspicion,
+                "CONFLICTING_SIGNALS");
     }
 
     @Test
     void clearBandsNeverCallDecider() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.9, "CHAIN", 0.9), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "codes", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "codes", null);
 
         // CLEAR_SIMPLE: tiny prompt (40 chars -> 10 tokens, -10), breadth 1 (-10) => -20
         ComplexityVerdict simple = classifier.classify(createEnvelope(1, 40), 1000L);
@@ -90,7 +96,7 @@ class JevClassifierTest {
     @Test
     void confidentDecisionUsesJevBandAndTopology() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.92, "FAN_OUT", 0.88), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "none", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "none", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -107,7 +113,7 @@ class JevClassifierTest {
     @Test
     void jevMayDeAmbiguateToClearBand() {
         StubDecider decider = new StubDecider(decision("CLEAR_COMPLEX", 0.95, "SUPERVISOR", 0.9), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "none", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "none", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -120,7 +126,7 @@ class JevClassifierTest {
     @Test
     void codesModeAppendsReasonCode() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.92, "FAN_OUT", 0.88), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "codes", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "codes", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -132,7 +138,7 @@ class JevClassifierTest {
     void llmModeAppendsNarratorSentence() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.92, "FAN_OUT", 0.88), null);
         StubNarrator narrator = new StubNarrator("The breadth hint outgrows the narrow prompt.", null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "llm", narrator);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "llm", narrator);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -144,7 +150,7 @@ class JevClassifierTest {
     void llmModeNarratorFailureKeepsBaseRationaleOnly() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.92, "FAN_OUT", 0.88), null);
         StubNarrator narrator = new StubNarrator(null, new RuntimeException("narrator down"));
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "llm", narrator);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "llm", narrator);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -156,7 +162,7 @@ class JevClassifierTest {
     @Test
     void lowBandConfidenceFallsBackToRules() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.40, "FAN_OUT", 0.90), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "codes", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "codes", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -170,7 +176,7 @@ class JevClassifierTest {
     @Test
     void lowTopologyConfidenceFallsBackToRules() {
         StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.90, "FAN_OUT", 0.55), null);
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "codes", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "codes", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -183,7 +189,7 @@ class JevClassifierTest {
     @Test
     void deciderFailureFallsBackToRules() {
         StubDecider decider = new StubDecider(null, new RuntimeException("jev unreachable"));
-        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, "codes", null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "codes", null);
 
         ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
 
@@ -195,15 +201,48 @@ class JevClassifierTest {
     }
 
     @Test
+    void injectionSuspicionAtOrAboveThresholdFallsBackToRulesBeforeConfidenceGate() {
+        // High band/topology confidences prove the injection gate wins regardless of the confidence gate.
+        StubDecider suspicious = new StubDecider(decision("AMBIGUOUS", 0.95, "FAN_OUT", 0.9, 0.7), null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, suspicious, 0.6, 0.5, "codes", null);
+
+        ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
+
+        assertThat(verdict.band()).isEqualTo(Band.AMBIGUOUS);
+        assertThat(verdict.candidateTopology()).isEqualTo(Topology.CHAIN);
+        assertThat(verdict.rationale()).startsWith("[jev-injection-suspected: p=0.70] ");
+        assertThat(verdict.rationale()).contains("Breadth 2 [+5]");
+
+        // Boundary is inclusive: exactly 0.5 also falls back.
+        StubDecider boundary = new StubDecider(decision("AMBIGUOUS", 0.95, "FAN_OUT", 0.9, 0.5), null);
+        JevClassifier boundaryClassifier = new JevClassifier(ruleScorer, boundary, 0.6, 0.5, "codes", null);
+        ComplexityVerdict boundaryVerdict = boundaryClassifier.classify(createEnvelope(2, 400), 1000L);
+        assertThat(boundaryVerdict.candidateTopology()).isEqualTo(Topology.CHAIN);
+        assertThat(boundaryVerdict.rationale()).startsWith("[jev-injection-suspected: p=0.50] ");
+    }
+
+    @Test
+    void injectionSuspicionBelowThresholdTakesJevVerdict() {
+        StubDecider decider = new StubDecider(decision("AMBIGUOUS", 0.92, "FAN_OUT", 0.88, 0.49), null);
+        JevClassifier classifier = new JevClassifier(ruleScorer, decider, 0.6, 0.5, "none", null);
+
+        ComplexityVerdict verdict = classifier.classify(createEnvelope(2, 400), 1000L);
+
+        assertThat(verdict.band()).isEqualTo(Band.AMBIGUOUS);
+        assertThat(verdict.candidateTopology()).isEqualTo(Topology.FAN_OUT);
+        assertThat(verdict.rationale()).isEqualTo("jev: band=AMBIGUOUS p=0.92, topology=FAN_OUT p=0.88");
+    }
+
+    @Test
     void invalidBandOrTopologyValueFallsBackToRules() {
         JevClassifier classifier =
-                new JevClassifier(ruleScorer, new StubDecider(decision("SOMEHOW", 0.9, "CHAIN", 0.9), null), 0.6, "codes", null);
+                new JevClassifier(ruleScorer, new StubDecider(decision("SOMEHOW", 0.9, "CHAIN", 0.9), null), 0.6, 0.5, "codes", null);
         ComplexityVerdict badBand = classifier.classify(createEnvelope(2, 400), 1000L);
         assertThat(badBand.candidateTopology()).isEqualTo(Topology.CHAIN);
         assertThat(badBand.rationale()).startsWith("[jev-fallback: ");
 
         classifier = new JevClassifier(
-                ruleScorer, new StubDecider(decision("AMBIGUOUS", 0.9, "TOPOLOGY_TEAM", 0.9), null), 0.6, "codes", null);
+                ruleScorer, new StubDecider(decision("AMBIGUOUS", 0.9, "TOPOLOGY_TEAM", 0.9), null), 0.6, 0.5, "codes", null);
         ComplexityVerdict badTopology = classifier.classify(createEnvelope(2, 400), 1000L);
         assertThat(badTopology.candidateTopology()).isEqualTo(Topology.CHAIN);
         assertThat(badTopology.rationale()).startsWith("[jev-fallback: ");

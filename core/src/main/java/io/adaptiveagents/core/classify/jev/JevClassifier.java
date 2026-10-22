@@ -26,6 +26,13 @@ import java.util.Objects;
  * {@code confidenceThreshold} returns the rule verdict with prefix
  * {@code [jev-low-confidence: band=<B> p=<p>, topology=<T> p=<p>] }.</p>
  *
+ * <p>Injection gate: Jev has documented jaggedness — adversarial content is not treated as
+ * hostile by the decision itself. The "injection" noul probability therefore gates the decision
+ * before anything else (including the confidence gate): at or above
+ * {@code injectionThreshold} the whole decision is treated as untrusted and classification
+ * falls back to the deterministic rules with rationale prefix
+ * {@code [jev-injection-suspected: p=<%.2f>] }.</p>
+ *
  * <p>Rationale shape: always starts with {@code jev: band=<B> p=<%.2f>, topology=<T> p=<%.2f>};
  * rationale-mode=codes appends {@code ; reason=<code>}, rationale-mode=llm appends
  * {@code ; <narrator sentence>} (narrator failure is logged and drops the suffix). Fallback
@@ -38,6 +45,7 @@ public class JevClassifier implements ComplexityClassifier {
     private final RuleScorer ruleScorer;
     private final JevTopologyDecider decider;
     private final double confidenceThreshold;
+    private final double injectionThreshold;
     private final String rationaleMode;
     private final RationaleNarrator narrator;
 
@@ -45,11 +53,13 @@ public class JevClassifier implements ComplexityClassifier {
             RuleScorer ruleScorer,
             JevTopologyDecider decider,
             double confidenceThreshold,
+            double injectionThreshold,
             String rationaleMode,
             RationaleNarrator narrator) {
         this.ruleScorer = Objects.requireNonNull(ruleScorer, "ruleScorer");
         this.decider = Objects.requireNonNull(decider, "decider");
         this.confidenceThreshold = confidenceThreshold;
+        this.injectionThreshold = injectionThreshold;
         this.rationaleMode = normalizeRationaleMode(rationaleMode);
         this.narrator = narrator;
     }
@@ -81,6 +91,11 @@ public class JevClassifier implements ComplexityClassifier {
             decision = decider.decide(state);
         } catch (Exception e) {
             return fallback(ruleVerdict, "jev-fallback: " + e.getMessage());
+        }
+
+        if (decision.injectionSuspicion() >= injectionThreshold) {
+            return fallback(ruleVerdict,
+                    "jev-injection-suspected: p=" + formatProbability(decision.injectionSuspicion()));
         }
 
         if (decision.bandConfidence() < confidenceThreshold

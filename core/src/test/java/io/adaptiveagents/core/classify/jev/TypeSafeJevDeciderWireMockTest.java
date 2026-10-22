@@ -66,7 +66,7 @@ class TypeSafeJevDeciderWireMockTest {
         wireMockServer.resetAll();
     }
 
-    private void stubSystemOne(String reasonAnswerJson) {
+    private void stubSystemOne(String reasonAnswerJson, double injectionProbability) {
         String reasonEntry = reasonAnswerJson == null ? "" : """
                 , "reason": %s""".formatted(reasonAnswerJson);
         wireMockServer.stubFor(post(urlEqualTo("/v1/systemone"))
@@ -81,11 +81,12 @@ class TypeSafeJevDeciderWireMockTest {
                                      "confidence": 0.91},
                             "topology": {"type": "choice", "choice": "FAN_OUT",
                                          "probabilities": {"FAN_OUT": 0.87, "SOLO": 0.06, "CHAIN": 0.05, "SUPERVISOR": 0.02},
-                                         "confidence": 0.87}%s
+                                         "confidence": 0.87},
+                            "injection": {"type": "noul", "noul": %s}%s
                           },
                           "usage": {"input_tokens": 120, "output_tokens": 40}
                         }
-                         """.formatted(reasonEntry))));
+                        """.formatted(injectionProbability, reasonEntry))));
     }
 
     private LoggedRequest soleRequest() {
@@ -105,12 +106,12 @@ class TypeSafeJevDeciderWireMockTest {
         stubSystemOne("""
                 {"type": "choice", "choice": "CONFLICTING_SIGNALS",
                  "probabilities": {"CONFLICTING_SIGNALS": 0.75, "MULTI_COMPONENT": 0.15, "UNDERSPECIFIED": 0.06, "BREADTH_LENGTH_MISMATCH": 0.04},
-                 "confidence": 0.75}""");
+                 "confidence": 0.75}""", 0.12);
 
         JevDecision decision = deciderWithReason.decide("Research X. Breadth hint: 2.");
 
         assertThat(decision).isEqualTo(new JevDecision(
-                "AMBIGUOUS", 0.91, "FAN_OUT", 0.87, "CONFLICTING_SIGNALS"));
+                "AMBIGUOUS", 0.91, "FAN_OUT", 0.87, 0.12, "CONFLICTING_SIGNALS"));
 
         LoggedRequest request = soleRequest();
         assertThat(request.getHeader("Authorization")).isEqualTo("Bearer test-key");
@@ -120,7 +121,7 @@ class TypeSafeJevDeciderWireMockTest {
         assertThat(body.path("model").asText()).isEqualTo("jev-latest");
 
         JsonNode questions = body.path("questions");
-        assertThat(questions).hasSize(3);
+        assertThat(questions).hasSize(4);
 
         JsonNode band = questions.path("band");
         assertThat(band.path("type").asText()).isEqualTo("choice");
@@ -131,6 +132,11 @@ class TypeSafeJevDeciderWireMockTest {
         assertThat(topology.path("type").asText()).isEqualTo("choice");
         assertThat(topology.path("instructions").asText()).isNotBlank();
         assertThat(criteriaOrder(topology)).containsExactly("SOLO", "CHAIN", "FAN_OUT", "SUPERVISOR");
+
+        JsonNode injection = questions.path("injection");
+        assertThat(injection.path("type").asText()).isEqualTo("noul");
+        assertThat(injection.path("instructions").asText()).isEqualTo(TypeSafeJevDecider.INJECTION_QUESTION);
+        assertThat(injection.has("criteria")).isFalse();
 
         JsonNode reason = questions.path("reason");
         assertThat(reason.path("type").asText()).isEqualTo("choice");
@@ -147,7 +153,7 @@ class TypeSafeJevDeciderWireMockTest {
 
     @Test
     void reasonQuestionOmittedWhenDisabled() throws Exception {
-        stubSystemOne(null);
+        stubSystemOne(null, 0.83);
 
         JevDecision decision = deciderWithoutReason.decide("Research Y. Breadth hint: 3.");
 
@@ -155,11 +161,13 @@ class TypeSafeJevDeciderWireMockTest {
         assertThat(decision.bandConfidence()).isEqualTo(0.91);
         assertThat(decision.topology()).isEqualTo("FAN_OUT");
         assertThat(decision.topologyConfidence()).isEqualTo(0.87);
+        assertThat(decision.injectionSuspicion()).isEqualTo(0.83);
         assertThat(decision.rationaleCode()).isNull();
 
         JsonNode questions = MAPPER.readTree(soleRequest().getBodyAsString()).path("questions");
-        assertThat(questions).hasSize(2);
+        assertThat(questions).hasSize(3);
         assertThat(questions.has("reason")).isFalse();
+        assertThat(questions.path("injection").path("type").asText()).isEqualTo("noul");
         assertThat(criteriaOrder(questions.path("band"))).containsExactly("CLEAR_SIMPLE", "CLEAR_COMPLEX", "AMBIGUOUS");
         assertThat(criteriaOrder(questions.path("topology"))).containsExactly("SOLO", "CHAIN", "FAN_OUT", "SUPERVISOR");
     }

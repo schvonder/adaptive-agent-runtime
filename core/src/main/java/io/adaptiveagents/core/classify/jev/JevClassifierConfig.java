@@ -17,10 +17,16 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Properties (defaults in the {@code @Value} placeholders): {@code runtime.classifier.jev.base-url},
  * {@code runtime.classifier.jev.api-key}, {@code runtime.classifier.jev.model},
- * {@code runtime.classifier.jev.confidence-threshold}, and the shared
+ * {@code runtime.classifier.jev.confidence-threshold},
+ * {@code runtime.classifier.jev.injection-threshold}, and the shared
  * {@code runtime.classifier.rationale-mode}. rationale-mode=llm additionally requires a
  * {@link ChatClient.Builder} on the context for the narrator; without one the context fails to
  * start with an explicit message rather than silently degrading the rationale mode.</p>
+ *
+ * <p>The injection threshold defaults to 0.5 deliberately: noul probabilities are poorly
+ * calibrated around exactly 0.5 per the independent eval, but the cost of a false positive is
+ * only the deterministic rule fallback — never a wrong topology — so the default stays
+ * permissive rather than over-trusting the decision leg.</p>
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "runtime.classifier.leg", havingValue = "jev")
@@ -50,6 +56,7 @@ public class JevClassifierConfig {
             RuleScorer ruleScorer,
             JevTopologyDecider jevTopologyDecider,
             @Value("${runtime.classifier.jev.confidence-threshold:0.6}") double confidenceThreshold,
+            @Value("${runtime.classifier.jev.injection-threshold:0.5}") double injectionThreshold,
             @Value("${runtime.classifier.rationale-mode:codes}") String rationaleMode,
             ObjectProvider<ChatClient.Builder> chatClientBuilder) {
         String mode = JevClassifier.normalizeRationaleMode(rationaleMode);
@@ -63,6 +70,6 @@ public class JevClassifierConfig {
             }
             narrator = new LlmRationaleNarrator(builder.build());
         }
-        return new JevClassifier(ruleScorer, jevTopologyDecider, confidenceThreshold, mode, narrator);
+        return new JevClassifier(ruleScorer, jevTopologyDecider, confidenceThreshold, injectionThreshold, mode, narrator);
     }
 }
