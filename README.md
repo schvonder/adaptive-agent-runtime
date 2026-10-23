@@ -86,6 +86,18 @@ The `RuleScorer` scores prompt length, `breadth_hint`, and deadline tightness:
 
 `forced_topology` in the envelope body overrides the classifier from any ingress. The 12-task demo set, its expected routing distribution, and a contradicting-hints QA case are documented in [docs/TASKS.md](docs/TASKS.md).
 
+## Skills
+
+Optional instruction packages the agents can consult at runtime. Point `runtime.skills.path` (env `RUNTIME_SKILLS_PATH`) at a folder of skill packages — each a `SKILL.md` with a small frontmatter (`name:`, `description:`) and a markdown instruction body:
+
+```
+skills/
+  deep-research/SKILL.md
+  fact-checking/SKILL.md
+```
+
+When set, every topology gains two model tools — `list_skills` (catalog: name — description) and `load_skill(name)` (full instructions for the model to follow) — next to the workload tools. The folder is scanned once at startup; malformed or duplicate skills fail the boot with the offending file named. Absent (default): no skills bean, no extra tools, hermetic behavior unchanged.
+
 ## Benchmark
 
 The `bench` module runs the 12 demo tasks across all four topologies (`forced_topology` override), N ≥ 3 runs each, and reports median latency, token-priced cost, and rubric-scored quality; a stub profile exercises the full 4 × 12 × 3 matrix in CI without a model. [BENCHMARK.md](BENCHMARK.md) currently carries a **NOT RUN** status: no LLM backend with sustained throughput was available in this environment at commit time, so the file records the pinned profile and the exact reproduction command (`mvn test -pl bench -Pbenchmark-real`) instead of fabricated numbers.

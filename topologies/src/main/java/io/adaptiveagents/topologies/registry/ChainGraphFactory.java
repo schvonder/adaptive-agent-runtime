@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.core.skills.SkillTools;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.chain.ChainState;
 import io.adaptiveagents.topologies.guard.GuardException;
@@ -64,6 +65,7 @@ public final class ChainGraphFactory implements GraphFactory {
     private final CostTracker costTracker;
     private final ObjectProvider<Tracer> tracerProvider;
     private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
+    private final SkillTools skillTools;
     private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public ChainGraphFactory(
@@ -73,7 +75,8 @@ public final class ChainGraphFactory implements GraphFactory {
             NodeGuard nodeGuard,
             CostTracker costTracker,
             ObjectProvider<Tracer> tracerProvider,
-            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+            SkillTools skillTools) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.citeTool = citeTool;
@@ -81,6 +84,18 @@ public final class ChainGraphFactory implements GraphFactory {
         this.costTracker = costTracker;
         this.tracerProvider = tracerProvider;
         this.toolCallbackProvider = toolCallbackProvider;
+        this.skillTools = skillTools;
+    }
+
+    public ChainGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            CiteTool citeTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+        this(chatClientBuilder, searchTool, citeTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider, null);
     }
 
     public ChainGraphFactory(
@@ -310,6 +325,9 @@ public final class ChainGraphFactory implements GraphFactory {
 
     private String callText(ChatClient chatClient, List<ToolCallback> federatedTools, String userPrompt, UUID taskId, String nodeName) {
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userPrompt);
+        if (skillTools != null) {
+            spec = spec.tools(skillTools);
+        }
         if (!federatedTools.isEmpty()) {
             spec = spec.toolCallbacks(federatedTools);
         }

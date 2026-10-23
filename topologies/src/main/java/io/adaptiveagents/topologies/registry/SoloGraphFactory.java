@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.core.skills.SkillTools;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
@@ -50,6 +51,7 @@ public final class SoloGraphFactory implements GraphFactory {
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
     private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
+    private final SkillTools skillTools;
 
     /**
      * @param chatClientBuilder     Spring AI chat client builder; may be {@code null} in wiring-only
@@ -59,18 +61,31 @@ public final class SoloGraphFactory implements GraphFactory {
      * @param costTracker           per-response token/cost accounting
      * @param toolCallbackProvider  optional MCP-federated tool callbacks; may be {@code null} in
      *     wiring-only contexts (no federated tools are attached to the model calls)
+     * @param skillTools            optional skills surface ({@code list_skills}/{@code load_skill});
+     *     {@code null} when no skills folder is configured
      */
     public SoloGraphFactory(
             ChatClient.Builder chatClientBuilder,
             ResearchTools researchTools,
             NodeGuard nodeGuard,
             CostTracker costTracker,
-            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+            SkillTools skillTools) {
         this.chatClientBuilder = chatClientBuilder;
         this.researchTools = researchTools;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
         this.toolCallbackProvider = toolCallbackProvider;
+        this.skillTools = skillTools;
+    }
+
+    public SoloGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            ResearchTools researchTools,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+        this(chatClientBuilder, researchTools, nodeGuard, costTracker, toolCallbackProvider, null);
     }
 
     public SoloGraphFactory(ChatClient.Builder chatClientBuilder, ResearchTools researchTools, NodeGuard nodeGuard, CostTracker costTracker) {
@@ -115,6 +130,9 @@ public final class SoloGraphFactory implements GraphFactory {
                     ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                             .user(state.prompt())
                             .tools(researchTools);
+                    if (skillTools != null) {
+                        spec = spec.tools(skillTools);
+                    }
                     if (!federatedTools.isEmpty()) {
                         spec = spec.toolCallbacks(federatedTools);
                     }

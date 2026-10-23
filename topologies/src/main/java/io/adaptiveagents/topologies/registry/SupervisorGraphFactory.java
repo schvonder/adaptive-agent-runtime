@@ -5,6 +5,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeActionWithConfig.node_async;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.adaptiveagents.core.skills.SkillTools;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.GuardException;
 import io.adaptiveagents.topologies.guard.NodeGuard;
@@ -86,6 +87,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
     private final CostTracker costTracker;
     private final ObjectProvider<Tracer> tracerProvider;
     private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
+    private final SkillTools skillTools;
     private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public SupervisorGraphFactory(
@@ -94,13 +96,25 @@ public final class SupervisorGraphFactory implements GraphFactory {
             NodeGuard nodeGuard,
             CostTracker costTracker,
             ObjectProvider<Tracer> tracerProvider,
-            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+            SkillTools skillTools) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
         this.tracerProvider = tracerProvider;
         this.toolCallbackProvider = toolCallbackProvider;
+        this.skillTools = skillTools;
+    }
+
+    public SupervisorGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
+        this(chatClientBuilder, searchTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider, null);
     }
 
     public SupervisorGraphFactory(
@@ -354,6 +368,9 @@ public final class SupervisorGraphFactory implements GraphFactory {
 
     private String callText(ChatClient chatClient, List<ToolCallback> federatedTools, String userPrompt, UUID taskId, String nodeName) {
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userPrompt);
+        if (skillTools != null) {
+            spec = spec.tools(skillTools);
+        }
         if (!federatedTools.isEmpty()) {
             spec = spec.toolCallbacks(federatedTools);
         }

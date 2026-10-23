@@ -1,5 +1,6 @@
 package io.adaptiveagents.topologies.registry;
 
+import io.adaptiveagents.core.skills.SkillTools;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.CiteTool;
@@ -31,7 +32,8 @@ public class ChainTopologyConfig {
             ObjectProvider<Tracer> tracerProvider,
             // By name — the context also has the server-side "taskTools" provider; null when no MCP client.
             @Qualifier("mcpToolCallbacks")
-            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
-        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider);
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+            ObjectProvider<SkillTools> skillTools) {
+        return new ChainGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, citeTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider, skillTools.getIfAvailable());
     }
 }

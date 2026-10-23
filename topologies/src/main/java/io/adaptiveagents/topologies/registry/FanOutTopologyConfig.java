@@ -1,5 +1,6 @@
 package io.adaptiveagents.topologies.registry;
 
+import io.adaptiveagents.core.skills.SkillTools;
 import io.adaptiveagents.topologies.budget.CostTracker;
 import io.adaptiveagents.topologies.guard.NodeGuard;
 import io.adaptiveagents.workload.tools.SearchTool;
@@ -29,7 +30,8 @@ public class FanOutTopologyConfig {
             ObjectProvider<Tracer> tracerProvider,
             // By name — the context also has the server-side "taskTools" provider; null when no MCP client.
             @Qualifier("mcpToolCallbacks")
-            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
-        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider);
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider,
+            ObjectProvider<SkillTools> skillTools) {
+        return new FanOutGraphFactory(chatClientBuilder.getIfAvailable(), searchTool, nodeGuard, costTracker, tracerProvider, toolCallbackProvider, skillTools.getIfAvailable());
     }
 }

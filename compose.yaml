@@ -45,12 +45,18 @@ services:
       # the TypeSafe AI decision model) and that leg's API key passthrough.
       RUNTIME_CLASSIFIER_LEG: ${RUNTIME_CLASSIFIER_LEG:-}
       RUNTIME_CLASSIFIER_JEV_API_KEY: ${RUNTIME_CLASSIFIER_JEV_API_KEY:-}
+      # Optional skills folder (runtime.skills.path): uncomment together with the
+      # ./skills volume mount below — blank would scan nothing, absent stays off.
+      # RUNTIME_SKILLS_PATH: /app/skills
       # Micrometer OTLP export → jaeger (application.yml reads this env). The
       # signal-specific var pins the full path verbatim: the generic base var is
       # all the OTel SDK honors when Boot's property layer is bypassed, and it
       # would append /v1/traces onto an already-full path (→ 404).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}
+    # Skills folder mount — uncomment together with RUNTIME_SKILLS_PATH above.
+    # volumes:
+    #   - ./skills:/app/skills:ro
     ports:
       - "8080:8080"
     healthcheck:

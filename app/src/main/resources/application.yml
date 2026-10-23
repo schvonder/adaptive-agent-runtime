@@ -1,7 +1,8 @@
 # Single-deployable runtime config. Deployment-specific values (datasource, API key,
 # Kafka flag) arrive via environment/args (SpawnedApp tests, docker-compose in todo 29);
-# this file carries only static switches: the MCP ingress switch below and the
-# commented-out MCP client federation example (outbound). The MCP server mounts on the
+# this file carries only static switches: the MCP ingress switch below, the
+# commented-out MCP client federation example (outbound), and the commented-out
+# skills folder example. The MCP server mounts on the
 # same servlet port as REST/SSE at /mcp — auth-exempt per the docs/ENVELOPE.md auth
 # matrix (ApiKeyAuthFilter guards /tasks only).
 spring:
@@ -33,6 +34,21 @@ spring:
       #       example-local:
       #         command: /usr/local/bin/mcp-server
       #         args: [--stdio]
+
+# Skills: optional folder of instruction packages. Uncomment and point at a folder where
+# each skill is a SKILL.md (nested subfolders allowed) shaped like
+#   ---
+#   name: deep-research
+#   description: When to use this skill
+#   ---
+#   (markdown instruction body)
+# The folder is scanned once at startup; malformed or duplicate skills fail the boot with
+# the offending file named. When set, every topology gains two model tools
+# (list_skills / load_skill) next to the workload tools. Absent (default): no skills
+# bean, hermetic behavior unchanged.
+#runtime:
+#  skills:
+#    path: ./skills
 
 management:
   tracing:
