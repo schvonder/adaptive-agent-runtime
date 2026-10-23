@@ -31,6 +31,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
 
 /**
@@ -75,6 +77,7 @@ public final class FanOutGraphFactory implements GraphFactory {
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
     private final ObjectProvider<Tracer> tracerProvider;
+    private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
     private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public FanOutGraphFactory(
@@ -82,12 +85,23 @@ public final class FanOutGraphFactory implements GraphFactory {
             SearchTool searchTool,
             NodeGuard nodeGuard,
             CostTracker costTracker,
-            ObjectProvider<Tracer> tracerProvider) {
+            ObjectProvider<Tracer> tracerProvider,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
         this.tracerProvider = tracerProvider;
+        this.toolCallbackProvider = toolCallbackProvider;
+    }
+
+    public FanOutGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
+        this(chatClientBuilder, searchTool, nodeGuard, costTracker, tracerProvider, null);
     }
 
     public FanOutGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
@@ -98,6 +112,7 @@ public final class FanOutGraphFactory implements GraphFactory {
     public StateGraph<FanOutState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
+            List<ToolCallback> federatedTools = federatedToolCallbacks();
             Map<String, Channel<?>> channels = Map.of(
                     FanOutState.SECTIONS, Channels.<String>appenderWithDuplicate(ArrayList::new),
                     FanOutState.FAILURES, Channels.<String>appenderWithDuplicate(ArrayList::new));
@@ -105,7 +120,7 @@ public final class FanOutGraphFactory implements GraphFactory {
             StateGraph<FanOutState> graph = new StateGraph<>(channels, FanOutState::new);
 
             for (int branch = 1; branch <= FAN_WIDTH; branch++) {
-                graph.addNode(branchNodeId(branch), branchNode(branch, chatClient));
+                graph.addNode(branchNodeId(branch), branchNode(branch, chatClient, federatedTools));
             }
             graph.addNode(GATHER_NODE, node_async(gatherNode()));
 
@@ -126,22 +141,22 @@ public final class FanOutGraphFactory implements GraphFactory {
      * scheduled via {@link CompletableFuture#supplyAsync(java.util.function.Supplier, Executor)}
      * so the parallel node's {@code allOfFailFast} sees genuinely concurrent branches.
      */
-    private AsyncNodeActionWithConfig<FanOutState> branchNode(int branch, ChatClient chatClient) {
+    private AsyncNodeActionWithConfig<FanOutState> branchNode(int branch, ChatClient chatClient, List<ToolCallback> federatedTools) {
         Tracer tracer = tracerProvider != null ? tracerProvider.getIfAvailable() : null;
         return (state, config) -> {
             Span currentSpan = tracer != null ? tracer.currentSpan() : null;
             return CompletableFuture.supplyAsync(() -> {
                 if (tracer != null && currentSpan != null) {
                     try (Tracer.SpanInScope ws = tracer.withSpan(currentSpan)) {
-                        return runBranch(branch, state, config, chatClient);
+                        return runBranch(branch, state, config, chatClient, federatedTools);
                     }
                 }
-                return runBranch(branch, state, config, chatClient);
+                return runBranch(branch, state, config, chatClient, federatedTools);
             }, VIRTUAL);
         };
     }
 
-    private Map<String, Object> runBranch(int branch, FanOutState state, RunnableConfig config, ChatClient chatClient) {
+    private Map<String, Object> runBranch(int branch, FanOutState state, RunnableConfig config, ChatClient chatClient, List<ToolCallback> federatedTools) {
         UUID taskId = taskId(config);
         try {
             nodeGuard.check(branchNodeId(branch), taskId);
@@ -153,7 +168,7 @@ public final class FanOutGraphFactory implements GraphFactory {
                     () -> searchTool.search(state.prompt() + " aspect " + branch));
             String section = results.isEmpty()
                     ? "No sources found for aspect " + branch
-                    : summarize(chatClient, branch, results, taskId);
+                    : summarize(chatClient, federatedTools, branch, results, taskId);
             if (section == null || section.isBlank()) {
                 return failure(branch, "empty summary response");
             }
@@ -227,14 +242,29 @@ public final class FanOutGraphFactory implements GraphFactory {
                 FanOutState.GUARD_REJECTED, e.getClass().getSimpleName());
     }
 
-    private String summarize(ChatClient chatClient, int branch, List<SearchResult> results, UUID taskId) {
+    private String summarize(ChatClient chatClient, List<ToolCallback> federatedTools, int branch, List<SearchResult> results, UUID taskId) {
         StringBuilder sb = new StringBuilder("Summarize these results for aspect ").append(branch).append(":\n");
         for (SearchResult result : results) {
             sb.append("- ").append(result.title()).append(": ").append(result.snippet()).append("\n");
         }
-        ChatResponse response = chatClient.prompt().user(sb.toString()).call().chatResponse();
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(sb.toString());
+        if (!federatedTools.isEmpty()) {
+            spec = spec.toolCallbacks(federatedTools);
+        }
+        ChatResponse response = spec.call().chatResponse();
         costTracker.record(branchNodeId(branch), taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
+    }
+
+    private List<ToolCallback> federatedToolCallbacks() {
+        if (toolCallbackProvider == null) {
+            return List.of();
+        }
+        ToolCallbackProvider provider = toolCallbackProvider.getIfAvailable();
+        if (provider == null) {
+            return List.of();
+        }
+        return List.of(provider.getToolCallbacks());
     }
 
     private static String buildResultJson(List<String> sections, List<String> failures, boolean degraded) {

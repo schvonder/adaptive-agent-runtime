@@ -1,8 +1,9 @@
 # Single-deployable runtime config. Deployment-specific values (datasource, API key,
 # Kafka flag) arrive via environment/args (SpawnedApp tests, docker-compose in todo 29);
-# this file carries only the static MCP ingress switch. The MCP server mounts on the same
-# servlet port as REST/SSE at /mcp — auth-exempt per the docs/ENVELOPE.md auth matrix
-# (ApiKeyAuthFilter guards /tasks only).
+# this file carries only static switches: the MCP ingress switch below and the
+# commented-out MCP client federation example (outbound). The MCP server mounts on the
+# same servlet port as REST/SSE at /mcp — auth-exempt per the docs/ENVELOPE.md auth
+# matrix (ApiKeyAuthFilter guards /tasks only).
 spring:
   application:
     name: adaptive-agent-runtime
@@ -12,6 +13,26 @@ spring:
         name: adaptive-agent-runtime
         version: 0.1.0
         protocol: STREAMABLE
+      # MCP client federation (outbound). Uncomment this block to federate the tools
+      # of the listed external MCP servers into every topology graph (SOLO, CHAIN,
+      # FAN_OUT, SUPERVISOR) alongside the built-in ResearchTools. Connection maps:
+      #   streamable-http: connections.<name>.url            (remote streamable server)
+      #   sse:             connections.<name>.url            (legacy SSE server)
+      #   stdio:           connections.<name>.command/args/env (local subprocess)
+      # Hermetic default: with this block commented out the starter registers zero
+      # connections, the ToolCallbackProvider bean exposes no tools, and no outbound
+      # network session is opened — so CI and the fixture-model stack boot unchanged.
+      # client:
+      #   enabled: true
+      #   streamable-http:
+      #     connections:
+      #       example-remote:
+      #         url: http://mcp.example.org:8081/mcp
+      #   stdio:
+      #     connections:
+      #       example-local:
+      #         command: /usr/local/bin/mcp-server
+      #         args: [--stdio]
 
 management:
   tracing:

@@ -63,6 +63,14 @@
             <artifactId>workload</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- MCP client federation: external MCP servers listed under spring.ai.mcp.client.*
+             expose their tools to every topology graph (version managed by spring-ai-bom).
+             With no connections configured the starter registers zero clients and opens
+             no network sessions — the hermetic default holds. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>

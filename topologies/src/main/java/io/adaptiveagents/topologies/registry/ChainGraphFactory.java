@@ -27,6 +27,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
 
 /**
@@ -61,6 +63,7 @@ public final class ChainGraphFactory implements GraphFactory {
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
     private final ObjectProvider<Tracer> tracerProvider;
+    private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
     private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public ChainGraphFactory(
@@ -69,13 +72,25 @@ public final class ChainGraphFactory implements GraphFactory {
             CiteTool citeTool,
             NodeGuard nodeGuard,
             CostTracker costTracker,
-            ObjectProvider<Tracer> tracerProvider) {
+            ObjectProvider<Tracer> tracerProvider,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.citeTool = citeTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
         this.tracerProvider = tracerProvider;
+        this.toolCallbackProvider = toolCallbackProvider;
+    }
+
+    public ChainGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            CiteTool citeTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
+        this(chatClientBuilder, searchTool, citeTool, nodeGuard, costTracker, tracerProvider, null);
     }
 
     public ChainGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, CiteTool citeTool, NodeGuard nodeGuard, CostTracker costTracker) {
@@ -86,10 +101,11 @@ public final class ChainGraphFactory implements GraphFactory {
     public StateGraph<ChainState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
+            List<ToolCallback> federatedTools = federatedToolCallbacks();
             StateGraph<ChainState> graph = new StateGraph<>(ChainState::new);
-            graph.addNode(PLAN_NODE, node_async(planNode(chatClient)));
+            graph.addNode(PLAN_NODE, node_async(planNode(chatClient, federatedTools)));
             graph.addNode(SEARCH_NODE, node_async(searchNode()));
-            graph.addNode(SUMMARIZE_NODE, node_async(summarizeNode(chatClient)));
+            graph.addNode(SUMMARIZE_NODE, node_async(summarizeNode(chatClient, federatedTools)));
             graph.addNode(CITE_NODE, node_async(citeNode()));
             graph.addEdge(StateGraph.START, PLAN_NODE);
             graph.addEdge(PLAN_NODE, SEARCH_NODE);
@@ -102,7 +118,7 @@ public final class ChainGraphFactory implements GraphFactory {
         }
     }
 
-    private NodeActionWithConfig<ChainState> planNode(ChatClient chatClient) {
+    private NodeActionWithConfig<ChainState> planNode(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
@@ -111,7 +127,7 @@ public final class ChainGraphFactory implements GraphFactory {
                 return foldGuard(PLAN_NODE, e, state);
             }
             try {
-                String text = callText(chatClient, "Create a concise search plan for: " + state.prompt(), taskId, PLAN_NODE);
+                String text = callText(chatClient, federatedTools, "Create a concise search plan for: " + state.prompt(), taskId, PLAN_NODE);
                 if (text == null || text.isBlank()) {
                     return fold(PLAN_NODE, "empty plan response");
                 }
@@ -147,7 +163,7 @@ public final class ChainGraphFactory implements GraphFactory {
         };
     }
 
-    private NodeActionWithConfig<ChainState> summarizeNode(ChatClient chatClient) {
+    private NodeActionWithConfig<ChainState> summarizeNode(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             if (state.degraded()) {
                 return Map.of();
@@ -163,7 +179,7 @@ public final class ChainGraphFactory implements GraphFactory {
                 return Map.of(ChainState.SUMMARY, EMPTY_SUMMARY);
             }
             try {
-                String text = callText(chatClient, summarizePrompt(results), taskId, SUMMARIZE_NODE);
+                String text = callText(chatClient, federatedTools, summarizePrompt(results), taskId, SUMMARIZE_NODE);
                 if (text == null || text.isBlank()) {
                     return fold(SUMMARIZE_NODE, "empty summary response");
                 }
@@ -292,10 +308,25 @@ public final class ChainGraphFactory implements GraphFactory {
         return root.toString();
     }
 
-    private String callText(ChatClient chatClient, String userPrompt, UUID taskId, String nodeName) {
-        ChatResponse response = chatClient.prompt().user(userPrompt).call().chatResponse();
+    private String callText(ChatClient chatClient, List<ToolCallback> federatedTools, String userPrompt, UUID taskId, String nodeName) {
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userPrompt);
+        if (!federatedTools.isEmpty()) {
+            spec = spec.toolCallbacks(federatedTools);
+        }
+        ChatResponse response = spec.call().chatResponse();
         costTracker.record(nodeName, taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
+    }
+
+    private List<ToolCallback> federatedToolCallbacks() {
+        if (toolCallbackProvider == null) {
+            return List.of();
+        }
+        ToolCallbackProvider provider = toolCallbackProvider.getIfAvailable();
+        if (provider == null) {
+            return List.of();
+        }
+        return List.of(provider.getToolCallbacks());
     }
 
     private ChatClient buildChatClient() {

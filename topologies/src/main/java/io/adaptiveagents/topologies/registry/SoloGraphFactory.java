@@ -22,6 +22,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * SOLO topology: a single-node graph that runs a bounded ReAct loop (max {@value #MAX_ITERATIONS}
@@ -46,27 +49,41 @@ public final class SoloGraphFactory implements GraphFactory {
     private final ResearchTools researchTools;
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
+    private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
 
     /**
-     * @param chatClientBuilder Spring AI chat client builder; may be {@code null} in wiring-only
+     * @param chatClientBuilder     Spring AI chat client builder; may be {@code null} in wiring-only
      *     contexts (the graph is unusable until {@link #graph()} is called with a real builder)
-     * @param researchTools     workload tool surface registered with the model
-     * @param nodeGuard         per-iteration budget/deadline seam
-     * @param costTracker       per-response token/cost accounting
+     * @param researchTools         workload tool surface registered with the model
+     * @param nodeGuard             per-iteration budget/deadline seam
+     * @param costTracker           per-response token/cost accounting
+     * @param toolCallbackProvider  optional MCP-federated tool callbacks; may be {@code null} in
+     *     wiring-only contexts (no federated tools are attached to the model calls)
      */
-    public SoloGraphFactory(ChatClient.Builder chatClientBuilder, ResearchTools researchTools, NodeGuard nodeGuard, CostTracker costTracker) {
+    public SoloGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            ResearchTools researchTools,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.researchTools = researchTools;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
+        this.toolCallbackProvider = toolCallbackProvider;
+    }
+
+    public SoloGraphFactory(ChatClient.Builder chatClientBuilder, ResearchTools researchTools, NodeGuard nodeGuard, CostTracker costTracker) {
+        this(chatClientBuilder, researchTools, nodeGuard, costTracker, null);
     }
 
     @Override
     public StateGraph<SoloState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
+            List<ToolCallback> federatedTools = federatedToolCallbacks();
             StateGraph<SoloState> graph = new StateGraph<>(SoloState::new);
-            graph.addNode(AGENT_NODE, node_async(agentAction(chatClient)));
+            graph.addNode(AGENT_NODE, node_async(agentAction(chatClient, federatedTools)));
             graph.addEdge(StateGraph.START, AGENT_NODE);
             graph.addEdge(AGENT_NODE, StateGraph.END);
             return graph;
@@ -75,7 +92,7 @@ public final class SoloGraphFactory implements GraphFactory {
         }
     }
 
-    private NodeActionWithConfig<SoloState> agentAction(ChatClient chatClient) {
+    private NodeActionWithConfig<SoloState> agentAction(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             UUID taskId = taskId(config);
             List<String> transcript = new ArrayList<>();
@@ -95,11 +112,13 @@ public final class SoloGraphFactory implements GraphFactory {
                 }
 
                 try {
-                    ChatResponse response = chatClient.prompt()
+                    ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                             .user(state.prompt())
-                            .tools(researchTools)
-                            .call()
-                            .chatResponse();
+                            .tools(researchTools);
+                    if (!federatedTools.isEmpty()) {
+                        spec = spec.toolCallbacks(federatedTools);
+                    }
+                    ChatResponse response = spec.call().chatResponse();
                     costTracker.record(AGENT_NODE, taskId, response);
                     String text = response.getResult() == null ? null : response.getResult().getOutput().getText();
                     if (text != null && !text.isBlank()) {
@@ -134,6 +153,22 @@ public final class SoloGraphFactory implements GraphFactory {
             throw new IllegalStateException("ChatClient.Builder is not available; cannot build SOLO graph");
         }
         return chatClientBuilder.build();
+    }
+
+    /**
+     * Resolves MCP-federated tool callbacks once per graph build. Absent provider, missing bean,
+     * or empty callback list yield an empty list — the model call is then built exactly as before,
+     * with no extra objects in the prompt path.
+     */
+    private List<ToolCallback> federatedToolCallbacks() {
+        if (toolCallbackProvider == null) {
+            return List.of();
+        }
+        ToolCallbackProvider provider = toolCallbackProvider.getIfAvailable();
+        if (provider == null) {
+            return List.of();
+        }
+        return List.of(provider.getToolCallbacks());
     }
 
     private static UUID taskId(RunnableConfig config) {

@@ -2,7 +2,7 @@
 
 An adaptive, durable multi-agent runtime for the JVM. It is a single Spring Boot service that accepts research tasks over three protocols (REST+SSE, MCP streamable-http, Kafka request/reply), classifies each task's complexity, routes it to one of four code-defined agent topologies, and executes it durably on PostgreSQL checkpoints: a process killed mid-task resumes from the last checkpoint on restart, and a task that runs out of budget or deadline returns its partial result instead of silently disappearing.
 
-It is a runtime, not an agent platform. There is no web UI, no visual workflow designer, no dynamic or config-driven graph assembly, no MCP client or external tool federation, and no auth beyond a single `X-API-Key` on the REST ingress. The topology set is static and defined in code.
+It is a runtime, not an agent platform. There is no web UI, no visual workflow designer, and no dynamic or config-driven graph assembly; external tools enter only through the config-driven MCP client federation (servers listed under `spring.ai.mcp.client.*`, their tools attached to every topology), and there is no auth beyond a single `X-API-Key` on the REST ingress. The topology set is static and defined in code.
 
 ## Why
 
@@ -69,6 +69,7 @@ Three ingresses map onto the same canonical `TaskEnvelope` JSON body. `task_id` 
 - **REST + SSE** — `POST /tasks` (202 with `task_id`; a duplicate `task_id` returns the existing task), `GET /tasks/{id}`, and `GET /tasks/{id}/events` with `Last-Event-ID` replay; `X-API-Key` required on `/tasks/**`, failures mapped as RFC 7807 problem+json.
 - **MCP** — streamable-http on the same servlet port at `/mcp`, auth-exempt; tools `submit_task`, `get_task`, `get_task_result`; client errors surface as tool error results, never HTTP 500.
 - **Kafka** — request/reply: a record on `adaptive-tasks-request` gets an immediate submission ACK on `adaptive-tasks-reply` (the listener never blocks on task completion), progress is a live tail on `adaptive-tasks-progress`, and poison envelopes are copied to `adaptive-tasks-request-dlt`.
+- **MCP client (outbound federation)** — external MCP servers listed under `spring.ai.mcp.client.*` in `application.yml` (streamable-http / sse / stdio); their tools are federated into every topology alongside the workload tools. Off by default (commented example in the config) — the hermetic stack opens no outbound sessions.
 
 Full mapping tables, the auth matrix, and Kafka/SSE consumption notes: [docs/ENVELOPE.md](docs/ENVELOPE.md). Client result-consumption patterns (polling vs progress-topic tail): [bench/README.md](bench/README.md).
 

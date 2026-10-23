@@ -26,6 +26,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
 
 /**
@@ -83,6 +85,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
     private final NodeGuard nodeGuard;
     private final CostTracker costTracker;
     private final ObjectProvider<Tracer> tracerProvider;
+    private final ObjectProvider<ToolCallbackProvider> toolCallbackProvider;
     private static final ThreadLocal<Boolean> IN_TOOL_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public SupervisorGraphFactory(
@@ -90,12 +93,23 @@ public final class SupervisorGraphFactory implements GraphFactory {
             SearchTool searchTool,
             NodeGuard nodeGuard,
             CostTracker costTracker,
-            ObjectProvider<Tracer> tracerProvider) {
+            ObjectProvider<Tracer> tracerProvider,
+            ObjectProvider<ToolCallbackProvider> toolCallbackProvider) {
         this.chatClientBuilder = chatClientBuilder;
         this.searchTool = searchTool;
         this.nodeGuard = nodeGuard;
         this.costTracker = costTracker;
         this.tracerProvider = tracerProvider;
+        this.toolCallbackProvider = toolCallbackProvider;
+    }
+
+    public SupervisorGraphFactory(
+            ChatClient.Builder chatClientBuilder,
+            SearchTool searchTool,
+            NodeGuard nodeGuard,
+            CostTracker costTracker,
+            ObjectProvider<Tracer> tracerProvider) {
+        this(chatClientBuilder, searchTool, nodeGuard, costTracker, tracerProvider, null);
     }
 
     public SupervisorGraphFactory(ChatClient.Builder chatClientBuilder, SearchTool searchTool, NodeGuard nodeGuard, CostTracker costTracker) {
@@ -106,10 +120,11 @@ public final class SupervisorGraphFactory implements GraphFactory {
     public StateGraph<SupervisorState> graph() {
         try {
             ChatClient chatClient = buildChatClient();
+            List<ToolCallback> federatedTools = federatedToolCallbacks();
             StateGraph<SupervisorState> graph = new StateGraph<>(SupervisorState::new);
-            graph.addNode(RESEARCHER_NODE, node_async(researcherNode(chatClient)));
-            graph.addNode(WRITER_NODE, node_async(writerNode(chatClient)));
-            graph.addNode(CRITIC_NODE, node_async(criticNode(chatClient)));
+            graph.addNode(RESEARCHER_NODE, node_async(researcherNode(chatClient, federatedTools)));
+            graph.addNode(WRITER_NODE, node_async(writerNode(chatClient, federatedTools)));
+            graph.addNode(CRITIC_NODE, node_async(criticNode(chatClient, federatedTools)));
             graph.addNode(SUPERVISOR_NODE, node_async(supervisorNode()));
             graph.addNode(FINALIZE_NODE, node_async(finalizeNode()));
 
@@ -161,7 +176,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
         };
     }
 
-    private NodeActionWithConfig<SupervisorState> researcherNode(ChatClient chatClient) {
+    private NodeActionWithConfig<SupervisorState> researcherNode(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
@@ -171,7 +186,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
             }
             try {
                 List<SearchResult> results = traceToolCall("web_search", taskId, () -> searchTool.search(state.prompt()));
-                String research = results.isEmpty() ? "No sources found." : distill(chatClient, state.prompt(), results, taskId);
+                String research = results.isEmpty() ? "No sources found." : distill(chatClient, federatedTools, state.prompt(), results, taskId);
                 if (research == null || research.isBlank()) {
                     return fold("researcher: empty research response");
                 }
@@ -208,7 +223,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
         }
     }
 
-    private NodeActionWithConfig<SupervisorState> writerNode(ChatClient chatClient) {
+    private NodeActionWithConfig<SupervisorState> writerNode(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
@@ -217,7 +232,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 return foldGuard(WRITER_NODE, e, state);
             }
             try {
-                String draft = writeDraft(chatClient, state, taskId);
+                String draft = writeDraft(chatClient, federatedTools, state, taskId);
                 if (draft == null || draft.isBlank()) {
                     return fold("writer: empty draft response");
                 }
@@ -229,7 +244,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
         };
     }
 
-    private NodeActionWithConfig<SupervisorState> criticNode(ChatClient chatClient) {
+    private NodeActionWithConfig<SupervisorState> criticNode(ChatClient chatClient, List<ToolCallback> federatedTools) {
         return (state, config) -> {
             UUID taskId = taskId(config);
             try {
@@ -238,7 +253,7 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 return foldGuard(CRITIC_NODE, e, state);
             }
             try {
-                String verdict = critique(chatClient, state.draft(), taskId);
+                String verdict = critique(chatClient, federatedTools, state.draft(), taskId);
                 if (verdict == null || verdict.isBlank()) {
                     return fold("critic: empty verdict response");
                 }
@@ -285,16 +300,16 @@ public final class SupervisorGraphFactory implements GraphFactory {
         return false;
     }
 
-    private String distill(ChatClient chatClient, String prompt, List<SearchResult> results, UUID taskId) {
+    private String distill(ChatClient chatClient, List<ToolCallback> federatedTools, String prompt, List<SearchResult> results, UUID taskId) {
         StringBuilder sb = new StringBuilder("Distill the following search results into concise research findings for: ")
                 .append(prompt).append("\n");
         for (SearchResult result : results) {
             sb.append("- ").append(result.title()).append(": ").append(result.snippet()).append("\n");
         }
-        return callText(chatClient, sb.toString(), taskId, RESEARCHER_NODE);
+        return callText(chatClient, federatedTools, sb.toString(), taskId, RESEARCHER_NODE);
     }
 
-    private String writeDraft(ChatClient chatClient, SupervisorState state, UUID taskId) {
+    private String writeDraft(ChatClient chatClient, List<ToolCallback> federatedTools, SupervisorState state, UUID taskId) {
         StringBuilder sb = new StringBuilder("Write a report draft (revision ")
                 .append(state.criticRounds() + 1)
                 .append(") based on the following research:\n")
@@ -303,14 +318,14 @@ public final class SupervisorGraphFactory implements GraphFactory {
         if (state.critique() != null) {
             sb.append("Address the previous critique:\n").append(state.critique()).append("\n");
         }
-        return callText(chatClient, sb.toString(), taskId, WRITER_NODE);
+        return callText(chatClient, federatedTools, sb.toString(), taskId, WRITER_NODE);
     }
 
-    private String critique(ChatClient chatClient, String draft, UUID taskId) {
+    private String critique(ChatClient chatClient, List<ToolCallback> federatedTools, String draft, UUID taskId) {
         String prompt = "Critique the following report draft and respond with a single line starting with "
                 + ACCEPT_PREFIX + " if it is ready, or " + REVISE_PREFIX + " followed by specific feedback:\n\n"
                 + draft;
-        return callText(chatClient, prompt, taskId, CRITIC_NODE);
+        return callText(chatClient, federatedTools, prompt, taskId, CRITIC_NODE);
     }
 
     private static String buildResultJson(SupervisorState state, boolean degraded) {
@@ -337,10 +352,25 @@ public final class SupervisorGraphFactory implements GraphFactory {
                 SupervisorState.PARTIAL_RESULT, buildResultJson(state, true));
     }
 
-    private String callText(ChatClient chatClient, String userPrompt, UUID taskId, String nodeName) {
-        ChatResponse response = chatClient.prompt().user(userPrompt).call().chatResponse();
+    private String callText(ChatClient chatClient, List<ToolCallback> federatedTools, String userPrompt, UUID taskId, String nodeName) {
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt().user(userPrompt);
+        if (!federatedTools.isEmpty()) {
+            spec = spec.toolCallbacks(federatedTools);
+        }
+        ChatResponse response = spec.call().chatResponse();
         costTracker.record(nodeName, taskId, response);
         return response.getResult() == null ? null : response.getResult().getOutput().getText();
+    }
+
+    private List<ToolCallback> federatedToolCallbacks() {
+        if (toolCallbackProvider == null) {
+            return List.of();
+        }
+        ToolCallbackProvider provider = toolCallbackProvider.getIfAvailable();
+        if (provider == null) {
+            return List.of();
+        }
+        return List.of(provider.getToolCallbacks());
     }
 
     private ChatClient buildChatClient() {
